@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+uv.lock
+pyproject.toml.bak
+
+# Node
+node_modules/
+package-lock.json
+dist/
+
+# Cloudflare
+.wrangler/
+.dev.vars
+
+# Редакторы
+.vscode/
+.idea/
+
+# Системные
+.DS_Store
+Thumbs.db
+
+# Секреты
+.env
+.env.local

@@ -18,8 +18,116 @@ class Default(WorkerEntrypoint):
         if request.method == "OPTIONS":
             return Response("", headers=headers)
         
-        # --- API для фронтенда ---
+        if path.endswith("/api/whoami"):
+            parts = url.split("?")
+            query = parts[1] if len(parts) > 1 else ""
+            
+            telegram_id = None
+            if "telegram_id=" in query:
+                telegram_id = query.split("telegram_id=")[1].split("&")[0]
+            
+            if not telegram_id:
+                return Response.json(
+                    {"error": "Не передан telegram_id"},
+                    status=400,
+                    headers=headers
+                )
+            
+            check = await self.env.booking_db.prepare(
+                "SELECT id FROM tenants WHERE owner_telegram_id = ?"
+            ).bind(telegram_id).first()
+            
+            if check:
+                return Response.json({"role": "owner"}, headers=headers)
+            
+            return Response.json({"role": "client"}, headers=headers)       # --- API для фронтенда ---
         
+        if path.endswith("/api/appointments"):
+            parts = url.split("?")
+            query = parts[1] if len(parts) > 1 else ""
+            
+            telegram_id = None
+            if "telegram_id=" in query:
+                telegram_id = query.split("telegram_id=")[1].split("&")[0]
+            
+            if not telegram_id:
+                return Response.json(
+                    {"error": "Не передан telegram_id"},
+                    status=401,
+                    headers=headers
+                )
+            
+            check = await self.env.booking_db.prepare(
+                "SELECT id FROM tenants WHERE owner_telegram_id = ?"
+            ).bind(telegram_id).first()
+            
+            if not check:
+                return Response.json(
+                    {"error": "Forbidden"},
+                    status=403,
+                    headers=headers
+                )
+            
+            result = await self.env.booking_db.prepare(
+                """SELECT 
+                    a.user_name,
+                    a.user_phone,
+                    s.name AS service_name,
+                    sl.datetime AS slot_datetime
+                FROM appointments a
+                JOIN services s ON s.id = a.service_id
+                JOIN slots sl ON sl.id = a.slot_id
+                WHERE a.tenant_id = ?
+                ORDER BY sl.datetime"""
+            ).bind(1).all()
+            return Response.json(result.results, headers=headers)
+        if path.endswith("/api/services") and request.method == "POST":
+            try:
+                # 1. Читаем тело запроса
+                body = await request.json()
+                name = body.get("name")
+                price = body.get("price")
+                description = body.get("description")
+                telegram_id = body.get("telegram_id")
+                tenant_id = 1
+
+                # 2. Проверяем, что обязательные поля пришли
+                if not all([name, price, telegram_id]):
+                    return Response.json(
+                        {"error": "Не все поля заполнены"},
+                        status=400,
+                        headers=headers
+                    )
+
+                # 3. Проверяем, что это владелец
+                check = await self.env.booking_db.prepare(
+                    "SELECT id FROM tenants WHERE owner_telegram_id = ?"
+                ).bind(telegram_id).first()
+
+                if not check:
+                    return Response.json(
+                        {"error": "Forbidden"},
+                        status=403,
+                        headers=headers
+                    )
+
+                # 4. Добавляем услугу в базу
+                await self.env.booking_db.prepare(
+                    "INSERT INTO services (tenant_id, name, price, description) VALUES (?, ?, ?, ?)"
+                ).bind(tenant_id, name, price, description).run()
+
+                # 5. Возвращаем успех
+                return Response.json(
+                    {"success": True},
+                    headers=headers
+                )
+
+            except Exception as e:
+                return Response.json(
+                    {"error": f"Ошибка сервера: {str(e)}"},
+                    status=500,
+                    headers=headers
+                )        
         if path.endswith("/api/services"):
             result = await self.env.booking_db.prepare(
                 "SELECT id, name, price FROM services WHERE tenant_id = 1"
