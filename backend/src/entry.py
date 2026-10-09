@@ -1,4 +1,4 @@
-from workers import WorkerEntrypoint, Response
+from workers import WorkerEntrypoint, Response, fetch, Request
 import json
 
 
@@ -185,17 +185,42 @@ class Default(WorkerEntrypoint):
                 
                 # 4. Создаём запись и помечаем слот — атомарно
                 await self.env.booking_db.batch([
-                self.env.booking_db.prepare(
-                    """INSERT INTO appointments 
-                       (tenant_id, user_name, user_phone, service_id, slot_id) 
-                       VALUES (?, ?, ?, ?, ?)"""
-                ).bind(tenant_id, user_name, user_phone, service_id, slot_id),
-                self.env.booking_db.prepare(
+                    self.env.booking_db.prepare(
+                        "INSERT INTO appointments (tenant_id, user_name, user_phone, service_id, slot_id) VALUES (?, ?, ?, ?, ?)"
+                    ).bind(tenant_id, user_name, user_phone, service_id, slot_id),
+                    self.env.booking_db.prepare(
                         "UPDATE slots SET is_booked = 1 WHERE id = ?"
-                ).bind(slot_id),
-            ])
+                    ).bind(slot_id),
+                ])
+
+                # Получаем данные для уведомления
+                service_info = await self.env.booking_db.prepare(
+                    "SELECT name, price FROM services WHERE id = ?"
+                ).bind(service_id).first()
                 
-                # 6. Возвращаем успех
+                slot_info = await self.env.booking_db.prepare(
+                    "SELECT datetime FROM slots WHERE id = ?"
+                ).bind(slot_id).first()
+                
+                owner = await self.env.booking_db.prepare(
+                    "SELECT owner_telegram_id FROM tenants WHERE id = ?"
+                ).bind(tenant_id).first()
+
+                # Отправляем уведомление владельцу
+                if owner and owner["owner_telegram_id"]:
+                    message = (
+                        f"🔔 <b>Новая запись!</b>\n\n"
+                        f"👤 <b>Имя:</b> {user_name}\n"
+                        f"📞 <b>Телефон:</b> {user_phone}\n"
+                        f"🔧 <b>Услуга:</b> {service_info['name']}\n"
+                        f"💰 <b>Цена:</b> {service_info['price']} ₽\n"
+                        f"📅 <b>Время:</b> {slot_info['datetime']}"
+                    )
+                    try:
+                        await self.send_telegram_message(owner["owner_telegram_id"], message)
+                    except Exception as e:
+                        print(f"Ошибка отправки в Telegram: {e}")
+
                 return Response.json(
                     {"success": True, "message": "Вы записаны!"},
                     headers=headers
@@ -219,3 +244,16 @@ class Default(WorkerEntrypoint):
         # --- Корневой путь ---
         
         return Response("Booking API is running", headers=headers)
+
+    async def send_telegram_message(self, chat_id, text):
+        token = self.env.TELEGRAM_BOT_TOKEN
+        url = f"https://api.telegram.org/bot{token}/sendMessage"
+        request = Request(url, method="POST", 
+            headers={"Content-Type": "application/json"},
+            body = json.dumps({
+                "chat_id": chat_id,
+                "text": text,
+                "parse_mode": "HTML"
+            }
+        ))
+        await fetch(request)
