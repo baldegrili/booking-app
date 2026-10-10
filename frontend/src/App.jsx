@@ -2,13 +2,11 @@ import { useEffect, useState } from 'react'
 import { getServices, getSlots, bookAppointment, getTenant, getRole, getAppointments, addService } from './api'
 import './App.css'
 
-const TEST_TELEGRAM_ID = 5072334101
-
 export default function App() {
   const [tenant, setTenant] = useState(null)
   const [role, setRole] = useState(null)
   const [screen, setScreen] = useState('home')
-  const [testId, setTestId] = useState(TEST_TELEGRAM_ID)
+  const [testId, setTestId] = useState(null)
 
   const [services, setServices] = useState([])
   const [slots, setSlots] = useState([])
@@ -20,11 +18,22 @@ export default function App() {
   const [status, setStatus] = useState(null)
   const [loading, setLoading] = useState(false)
 
-  // Форма новой услуги
   const [newService, setNewService] = useState({ name: '', price: '', description: '' })
   const [showAddForm, setShowAddForm] = useState(false)
 
   useEffect(() => {
+    const tg = window.Telegram?.WebApp
+    const userId = tg?.initDataUnsafe?.user?.id
+    if (userId) {
+      setTestId(userId)
+    } else {
+      setTestId(5072334101)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!testId) return
+
     getTenant().then(setTenant)
     getServices().then(setServices)
     getSlots().then(setSlots)
@@ -39,6 +48,7 @@ export default function App() {
       })
     }
   }, [screen, testId])
+
 
   const handleBook = async () => {
     if (!selectedService || !selectedSlot) {
@@ -111,23 +121,6 @@ export default function App() {
     }
   }
 
-  const TestSwitcher = () => (
-    <div className="test-switcher">
-      <span>Роль:</span>
-      <button
-        className={testId === TEST_TELEGRAM_ID ? 'active' : ''}
-        onClick={() => setTestId(TEST_TELEGRAM_ID)}
-      >
-        Владелец
-      </button>
-      <button
-        className={testId !== TEST_TELEGRAM_ID ? 'active' : ''}
-        onClick={() => setTestId(999999999)}
-      >
-        Клиент
-      </button>
-    </div>
-  )
 
   // --- Экран управления услугами ---
   if (screen === 'services') {
@@ -202,7 +195,6 @@ export default function App() {
           ))}
         </div>
 
-        <TestSwitcher />
       </div>
     )
   }
@@ -232,7 +224,6 @@ export default function App() {
           ))}
         </div>
 
-        <TestSwitcher />
       </div>
     )
   }
@@ -276,7 +267,6 @@ export default function App() {
           🔧 Записаться на услуги
         </button>
 
-        <TestSwitcher />
       </div>
     )
   }
@@ -389,7 +379,6 @@ export default function App() {
           </button>
         </div>
 
-        <TestSwitcher />
       </div>
     )
   }
@@ -397,7 +386,6 @@ export default function App() {
   return (
     <div className="app">
       <p>Загрузка...</p>
-      <TestSwitcher />
     </div>
   )
 }
