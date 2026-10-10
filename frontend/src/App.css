@@ -259,3 +259,95 @@ h2 {
   background: #2481cc;
   border-color: #2481cc;
 }
+.appointment-card {
+  background: #fff;
+  border: 1px solid #e0e0e0;
+  border-radius: 12px;
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 14px;
+}
+
+.appointment-time {
+  font-weight: 600;
+  font-size: 15px;
+  color: #2481cc;
+}
+
+.appointment-service {
+  color: #333;
+}
+
+.appointment-client {
+  color: #333;
+}
+
+.appointment-phone a {
+  color: #2481cc;
+  text-decoration: none;
+}
+/* Календарь */
+.calendar-wrapper {
+  background: #fff;
+  border-radius: 12px;
+  padding: 12px;
+  margin: 12px 0;
+}
+
+/* Тёмная тема для календаря */
+.rdp {
+  --rdp-cell-size: 40px;
+  --rdp-accent-color: #2481cc;
+  --rdp-background-color: #f0f7ff;
+  --rdp-accent-color-dark: #2481cc;
+  --rdp-background-color-dark: #f0f7ff;
+  margin: 0;
+}
+
+.rdp-day_selected,
+.rdp-day_selected:focus-visible,
+.rdp-day_selected:hover {
+  background-color: #2481cc;
+  color: white;
+}
+
+.rdp-day_today {
+  font-weight: bold;
+  color: #2481cc;
+}
+
+.rdp-button:hover:not([disabled]):not(.rdp-day_selected) {
+  background-color: #f0f7ff;
+}
+
+/* Сетка слотов */
+.slots-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  margin: 12px 0;
+}
+
+.slot {
+  padding: 12px 8px;
+  background: #fff;
+  border: 1px solid #e0e0e0;
+  border-radius: 10px;
+  text-align: center;
+  font-size: 15px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.slot:hover {
+  border-color: #2481cc;
+}
+
+.slot.selected {
+  background: #2481cc;
+  color: white;
+  border-color: #2481cc;
+}

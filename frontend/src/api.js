@@ -40,3 +40,7 @@ export async function addService(data) {
   })
   return res.json()
 }
+export async function getSlotsByDate(date) {
+  const res = await fetch(`${API_URL}/api/slots/by-date?date=${date}`)
+  return res.json()
+}

@@ -138,12 +138,35 @@ class Default(WorkerEntrypoint):
                 """SELECT id, name, address, phone, working_hours, logo_url, description 
                    FROM tenants WHERE id = 1"""
             ).first()
-            return Response.json(result, headers=headers)        
+            return Response.json(result, headers=headers)       
+
+        if path.endswith("/api/slots/by-date"):
+            parts = url.split("?")
+            query = parts[1] if len(parts) > 1 else ""
+            
+            date_str = None
+            if "date=" in query:
+                date_str = query.split("date=")[1].split("&")[0]
+            
+            if not date_str:
+                return Response.json(
+                    {"error": "Не передана дата"},
+                    status=400,
+                    headers=headers
+                )
+            
+            await self.generate_slots(1, 30)
+            result = await self.env.booking_db.prepare(
+                "SELECT id, datetime FROM slots WHERE tenant_id = 1 AND is_booked = 0 AND date(datetime) = ? ORDER BY datetime"
+            ).bind(date_str).all()
+            return Response.json(result.results, headers=headers)        
+        
         if path.endswith("/api/slots"):
+            await self.generate_slots(1, 30)
             result = await self.env.booking_db.prepare(
                 "SELECT id, datetime FROM slots WHERE tenant_id = 1 AND is_booked = 0 ORDER BY datetime"
             ).all()
-            return Response.json(result.results, headers=headers)
+            return Response.json(result.results, headers=headers)        
             # --- Создание записи ---
         
         if path.endswith("/api/book") and request.method == "POST":
@@ -256,4 +279,43 @@ class Default(WorkerEntrypoint):
                 "parse_mode": "HTML"
             }
         ))
-        await fetch(request)
+    async def generate_slots(self, tenant_id, days_ahead=30):
+        from datetime import date, timedelta
+            
+        schedules = await self.env.booking_db.prepare(
+            "SELECT day_of_week, start_time, end_time, is_working FROM schedules WHERE tenant_id = ?"
+        ).bind(tenant_id).all()            
+        tenant = await self.env.booking_db.prepare(                "SELECT slot_duration FROM tenants WHERE id = ?"
+        ).bind(tenant_id).first()
+
+        slot_duration = tenant["slot_duration"] or 120
+            
+        schedule_map = {s["day_of_week"]: s for s in schedules.results}
+            
+        today = date.today()
+            
+        for i in range(days_ahead):
+            current_date = today + timedelta(days=i)
+            day_of_week = current_date.weekday()
+                
+            schedule = schedule_map.get(day_of_week)
+            if not schedule or schedule["is_working"] == 0:
+                continue
+                
+            start_h, start_m = map(int, schedule["start_time"].split(":"))
+            end_h, end_m = map(int, schedule["end_time"].split(":"))
+                
+            current_minutes = start_h * 60 + start_m
+            end_minutes = end_h * 60 + end_m
+                
+            while current_minutes + slot_duration <= end_minutes:
+                h = current_minutes // 60
+                m = current_minutes % 60
+                slot_datetime = f"{current_date.isoformat()} {h:02d}:{m:02d}"
+                    
+                await self.env.booking_db.prepare(
+                    "INSERT OR IGNORE INTO slots (tenant_id, datetime, is_booked) VALUES (?, ?, 0)"
+                ).bind(tenant_id, slot_datetime).run()
+                    
+                current_minutes += slot_duration
+    #await fetch(request)
