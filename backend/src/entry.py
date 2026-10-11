@@ -281,41 +281,49 @@ class Default(WorkerEntrypoint):
         ))
     async def generate_slots(self, tenant_id, days_ahead=30):
         from datetime import date, timedelta
-            
+        
         schedules = await self.env.booking_db.prepare(
             "SELECT day_of_week, start_time, end_time, is_working FROM schedules WHERE tenant_id = ?"
-        ).bind(tenant_id).all()            
-        tenant = await self.env.booking_db.prepare(                "SELECT slot_duration FROM tenants WHERE id = ?"
+        ).bind(tenant_id).all()
+        
+        tenant = await self.env.booking_db.prepare(
+            "SELECT slot_duration FROM tenants WHERE id = ?"
         ).bind(tenant_id).first()
-
+        
         slot_duration = tenant["slot_duration"] or 120
-            
+        
         schedule_map = {s["day_of_week"]: s for s in schedules.results}
-            
+        
         today = date.today()
-            
+        inserts = []
+        
         for i in range(days_ahead):
             current_date = today + timedelta(days=i)
             day_of_week = current_date.weekday()
-                
+            
             schedule = schedule_map.get(day_of_week)
             if not schedule or schedule["is_working"] == 0:
                 continue
-                
+            
             start_h, start_m = map(int, schedule["start_time"].split(":"))
             end_h, end_m = map(int, schedule["end_time"].split(":"))
-                
+            
             current_minutes = start_h * 60 + start_m
             end_minutes = end_h * 60 + end_m
-                
+            
             while current_minutes + slot_duration <= end_minutes:
                 h = current_minutes // 60
                 m = current_minutes % 60
                 slot_datetime = f"{current_date.isoformat()} {h:02d}:{m:02d}"
-                    
-                await self.env.booking_db.prepare(
-                    "INSERT OR IGNORE INTO slots (tenant_id, datetime, is_booked) VALUES (?, ?, 0)"
-                ).bind(tenant_id, slot_datetime).run()
-                    
+                
+                inserts.append(
+                    self.env.booking_db.prepare(
+                        "INSERT OR IGNORE INTO slots (tenant_id, datetime, is_booked) VALUES (?, ?, 0)"
+                    ).bind(tenant_id, slot_datetime)
+                )
+                
                 current_minutes += slot_duration
+        
+        if inserts:
+            await self.env.booking_db.batch(inserts)
     #await fetch(request)

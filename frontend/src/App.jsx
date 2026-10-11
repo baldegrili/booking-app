@@ -1,8 +1,56 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { DayPicker } from 'react-day-picker'
 import 'react-day-picker/dist/style.css'
-import { getServices, getSlots, bookAppointment, getTenant, getRole, getAppointments, addService, getSlotsByDate } from './api'
+import { getServices, getSlotsByDate, bookAppointment, getTenant, getRole, getAppointments, addService } from './api'
 import './App.css'
+
+// Компонент для плавного появления при прокрутке
+function FadeIn({ children, delay = 0 }) {
+  const ref = useRef(null)
+  const [visible, setVisible] = useState(false)
+
+  useEffect(() => {
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting) {
+          setVisible(true)
+          observer.disconnect()
+        }
+      },
+      { threshold: 0.1 }
+    )
+    if (ref.current) observer.observe(ref.current)
+    return () => observer.disconnect()
+  }, [])
+
+  return (
+    <div
+      ref={ref}
+      className={`fade-in ${visible ? 'visible' : ''}`}
+      style={{ transitionDelay: `${delay}ms` }}
+    >
+      {children}
+    </div>
+  )
+}
+
+// Компонент успешной записи
+function SuccessCard({ onReset }) {
+  return (
+    <div className="success-overlay">
+      <div className="success-card">
+        <div className="success-icon">✓</div>
+        <h2 className="success-title">Вы записаны!</h2>
+        <p className="success-text">
+          Мы свяжемся с вами для подтверждения
+        </p>
+        <button className="book-button" onClick={onReset}>
+          Продолжить
+        </button>
+      </div>
+    </div>
+  )
+}
 
 export default function App() {
   const [tenant, setTenant] = useState(null)
@@ -21,21 +69,23 @@ export default function App() {
   const [status, setStatus] = useState(null)
   const [loading, setLoading] = useState(false)
 
+  const [openSection, setOpenSection] = useState('service')
+  const [showConfirm, setShowConfirm] = useState(false)
+  const [showSuccess, setShowSuccess] = useState(false)
+
   const [newService, setNewService] = useState({ name: '', price: '', description: '' })
   const [showAddForm, setShowAddForm] = useState(false)
 
-  // Получение ID из Telegram
   useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    const urlTestId = params.get('test_id')
     const tg = window.Telegram?.WebApp
     const userId = tg?.initDataUnsafe?.user?.id
-    if (userId) {
-      setTestId(userId)
-    } else {
-      setTestId(507233401)
-    }
+    if (userId) setTestId(userId)
+    else if (urlTestId) setTestId(urlTestId)
+    else setTestId(5072334101)
   }, [])
 
-  // Загрузка данных при старте
   useEffect(() => {
     if (!testId) return
     getTenant().then(setTenant)
@@ -43,10 +93,13 @@ export default function App() {
     getRole(testId).then(data => setRole(data.role))
   }, [testId])
 
-  // Загрузка слотов при выборе даты
   useEffect(() => {
     if (!selectedDate) return
-    const dateStr = selectedDate.toISOString().split('T')[0]
+    const year = selectedDate.getFullYear()
+    const month = String(selectedDate.getMonth() + 1).padStart(2, '0')
+    const day = String(selectedDate.getDate()).padStart(2, '0')
+    const dateStr = `${year}-${month}-${day}`
+
     getSlotsByDate(dateStr).then(data => {
       if (Array.isArray(data)) setSlots(data)
       else setSlots([])
@@ -54,7 +107,6 @@ export default function App() {
     setSelectedSlot(null)
   }, [selectedDate])
 
-  // Загрузка записей для владельца
   useEffect(() => {
     if (screen === 'appointments') {
       getAppointments(testId).then(data => {
@@ -64,16 +116,15 @@ export default function App() {
     }
   }, [screen, testId])
 
-  const handleBook = async () => {
-    if (!selectedService || !selectedSlot) {
-      setStatus({ type: 'error', text: 'Выберите услугу и время' })
-      return
-    }
-    if (!name.trim() || !phone.trim()) {
-      setStatus({ type: 'error', text: 'Заполните имя и телефон' })
-      return
-    }
+  const formatDate = (date) => {
+    if (!date) return ''
+    return date.toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' })
+  }
 
+  const isFormComplete = selectedService && selectedSlot && name.trim() && phone.trim()
+
+  const handleBook = async () => {
+    if (!isFormComplete) return
     setLoading(true)
     setStatus(null)
 
@@ -85,18 +136,22 @@ export default function App() {
       })
 
       if (result.success) {
-        setStatus({ type: 'success', text: 'Вы успешно записаны!' })
+        setShowConfirm(false)
+        setShowSuccess(true)
         setSelectedSlot(null)
         setSelectedService(null)
         setSelectedDate(null)
         setSlots([])
         setName('')
         setPhone('')
+        setOpenSection('service')
       } else {
         setStatus({ type: 'error', text: result.error || 'Ошибка записи' })
+        setShowConfirm(false)
       }
     } catch (e) {
       setStatus({ type: 'error', text: 'Ошибка соединения с сервером' })
+      setShowConfirm(false)
     } finally {
       setLoading(false)
     }
@@ -132,13 +187,11 @@ export default function App() {
     }
   }
 
-  // --- Экран управления услугами ---
+  // --- Экран управления услугами (владелец) ---
   if (screen === 'services') {
     return (
       <div className="app">
-        <button className="back-button" onClick={() => setScreen('home')}>
-          ← Назад
-        </button>
+        <button className="back-button" onClick={() => setScreen('home')}>← Назад</button>
         <h1>Управление услугами</h1>
 
         {!showAddForm && (
@@ -155,7 +208,7 @@ export default function App() {
             <button className="book-button" onClick={handleAddService} disabled={loading}>
               {loading ? 'Сохранение...' : 'Сохранить'}
             </button>
-            <button className="back-button" onClick={() => { setShowAddForm(false); setStatus(null) }}>
+            <button className="cancel-button" onClick={() => { setShowConfirm(false); setStatus(null) }}>
               Отмена
             </button>
           </div>
@@ -176,13 +229,11 @@ export default function App() {
     )
   }
 
-  // --- Экран записей клиентов ---
+  // --- Экран записей клиентов (владелец) ---
   if (screen === 'appointments') {
     return (
       <div className="app">
-        <button className="back-button" onClick={() => setScreen('home')}>
-          ← Назад
-        </button>
+        <button className="back-button" onClick={() => setScreen('home')}>← Назад</button>
         <h1>Записи клиентов</h1>
         <div className="list">
           {appointments.length === 0 && <div className="empty">Записей пока нет</div>}
@@ -203,108 +254,215 @@ export default function App() {
   if (role === 'client' && screen === 'home') {
     return (
       <div className="app">
-        <div className="hero">
-          {tenant?.logo_url ? (
-            <img src={tenant.logo_url} alt="Логотип" className="hero-logo" />
-          ) : (
-            <div className="hero-logo-placeholder">🔧</div>
-          )}
-          <h1>{tenant?.name || 'Загрузка...'}</h1>
-          <p className="hero-description">{tenant?.description}</p>
-        </div>
+        <FadeIn>
+          <div className="hero">
+            {tenant?.logo_url ? (
+              <img src={tenant.logo_url} alt="Логотип" className="hero-logo" />
+            ) : (
+              <div className="hero-logo-placeholder">🔧</div>
+            )}
+            <h1>{tenant?.name || 'Загрузка...'}</h1>
+            <p className="hero-description">{tenant?.description}</p>
+          </div>
+        </FadeIn>
 
-        <div className="info-block">
-          {tenant?.address && (
-            <div className="info-row"><span className="info-icon">📍</span><span>{tenant.address}</span></div>
-          )}
-          {tenant?.phone && (
-            <div className="info-row"><span className="info-icon">📞</span><a href={`tel:${tenant.phone}`}>{tenant.phone}</a></div>
-          )}
-          {tenant?.working_hours && (
-            <div className="info-row"><span className="info-icon">🕒</span><span>{tenant.working_hours}</span></div>
-          )}
-        </div>
+        <FadeIn delay={100}>
+          <div className="info-block">
+            {tenant?.address && (
+              <div className="info-row"><span className="info-icon">📍</span><span>{tenant.address}</span></div>
+            )}
+            {tenant?.phone && (
+              <div className="info-row"><span className="info-icon">📞</span><a href={`tel:${tenant.phone}`}>{tenant.phone}</a></div>
+            )}
+            {tenant?.working_hours && (
+              <div className="info-row"><span className="info-icon">🕒</span><span>{tenant.working_hours}</span></div>
+            )}
+          </div>
+        </FadeIn>
 
-        <button className="book-button" onClick={() => setScreen('booking')}>
-          🔧 Записаться на услуги
-        </button>
+        <FadeIn delay={200}>
+          <button className="book-button" onClick={() => setScreen('booking')}>
+            🔧 Записаться на услуги
+          </button>
+        </FadeIn>
       </div>
     )
   }
 
-  // --- Экран записи (календарь + слоты) ---
+  // --- Экран записи (ВИЗАРД) ---
   if (screen === 'booking') {
     return (
       <div className="app">
-        <button className="back-button" onClick={() => setScreen('home')}>
-          ← Назад
-        </button>
+        <button className="back-button" onClick={() => setScreen('home')}>← Назад</button>
+        <h1>Запись в студию</h1>
 
-        <h1>Запись на услугу</h1>
-
-        <h2>1. Выберите услугу</h2>
-        <div className="list">
-          {services.map(s => (
-            <div
-              key={s.id}
-              className={`card ${selectedService?.id === s.id ? 'selected' : ''}`}
-              onClick={() => setSelectedService(s)}
-            >
-              <b>{s.name}</b>
-              <span>{s.price} ₽</span>
-            </div>
-          ))}
-        </div>
-
-        <h2>2. Выберите дату</h2>
-        <div className="calendar-wrapper">
-          <DayPicker
-            mode="single"
-            selected={selectedDate}
-            onSelect={setSelectedDate}
-            locale="ru"
-            disabled={{ before: new Date() }}
-            weekdaysShort={['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс']}
-          />
-        </div>
-
-        {selectedDate && (
-          <>
-            <h2>3. Выберите время</h2>
-            <div className="slots-grid">
-              {slots.length === 0 && (
-                <div className="empty">Нет свободного времени на эту дату</div>
+        {/* Шаг 1: Услуга */}
+        <div className={`wizard-step ${selectedService ? 'done' : ''} ${openSection === 'service' ? 'open' : ''}`}>
+          <div className="wizard-header" onClick={() => setOpenSection(openSection === 'service' ? null : 'service')}>
+            <div className="wizard-step-number">{selectedService ? '✓' : '1'}</div>
+            <div className="wizard-header-content">
+              {selectedService ? (
+                <>
+                  <div className="wizard-label">Услуга</div>
+                  <div className="wizard-value">{selectedService.name} — {selectedService.price} ₽</div>
+                </>
+              ) : (
+                <div className="wizard-label">Выбрать услугу</div>
               )}
-              {slots.map(slot => (
+            </div>
+            <span className="wizard-arrow">{selectedService ? '✎' : '▸'}</span>
+          </div>
+
+          {openSection === 'service' && (
+            <div className="wizard-body">
+              {services.map(s => (
                 <div
-                  key={slot.id}
-                  className={`slot ${selectedSlot?.id === slot.id ? 'selected' : ''}`}
-                  onClick={() => setSelectedSlot(slot)}
+                  key={s.id}
+                  className="card"
+                  onClick={() => {
+                    setSelectedService(s)
+                    setOpenSection('date')
+                  }}
                 >
-                  {slot.datetime.split(' ')[1]}
+                  <b>{s.name}</b>
+                  <span>{s.price} ₽</span>
                 </div>
               ))}
             </div>
-          </>
-        )}
-
-        <h2>4. Ваши данные</h2>
-        <div className="form">
-          <input type="text" placeholder="Имя" value={name} onChange={e => setName(e.target.value)} />
-          <input type="tel" placeholder="Телефон" value={phone} onChange={e => setPhone(e.target.value)} />
+          )}
         </div>
 
-        {selectedService && selectedSlot && (
-          <div className="summary">
-            Вы выбрали: <b>{selectedService.name}</b> на <b>{selectedSlot.datetime}</b>
+        {/* Шаг 2: Дата и время */}
+        <div className={`wizard-step ${selectedSlot ? 'done' : ''} ${openSection === 'date' ? 'open' : ''}`}>
+          <div className="wizard-header" onClick={() => selectedService && setOpenSection(openSection === 'date' ? null : 'date')}>
+            <div className="wizard-step-number">{selectedSlot ? '✓' : '2'}</div>
+            <div className="wizard-header-content">
+              {selectedSlot ? (
+                <>
+                  <div className="wizard-label">Дата и время</div>
+                  <div className="wizard-value">{formatDate(selectedDate)}, {selectedSlot.datetime.split(' ')[1]}</div>
+                </>
+              ) : (
+                <div className="wizard-label">Выбрать дату</div>
+              )}
+            </div>
+            <span className="wizard-arrow">{selectedSlot ? '✎' : '▸'}</span>
           </div>
-        )}
 
-        <button className="book-button" onClick={handleBook} disabled={loading}>
-          {loading ? 'Отправка...' : 'Записаться'}
+          {openSection === 'date' && (
+            <div className="wizard-body">
+              <div className="calendar-wrapper">
+                <DayPicker
+                  mode="single"
+                  selected={selectedDate}
+                  onSelect={setSelectedDate}
+                  disabled={{ before: new Date() }}
+                  weekdaysShort={['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс']}
+                />
+              </div>
+
+              {selectedDate && (
+                <>
+                  <div className="wizard-subtitle">Свободное время</div>
+                  <div className="slots-grid">
+                    {slots.length === 0 && (
+                      <div className="empty">Нет свободного времени</div>
+                    )}
+                    {slots.map(slot => (
+                      <div
+                        key={slot.id}
+                        className={`slot ${selectedSlot?.id === slot.id ? 'selected' : ''}`}
+                        onClick={() => {
+                          setSelectedSlot(slot)
+                          setOpenSection('contacts')
+                        }}
+                      >
+                        {slot.datetime.split(' ')[1]}
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* Шаг 3: Контакты */}
+        <div className={`wizard-step ${isFormComplete ? 'done' : ''} ${openSection === 'contacts' ? 'open' : ''}`}>
+          <div className="wizard-header" onClick={() => selectedSlot && setOpenSection(openSection === 'contacts' ? null : 'contacts')}>
+            <div className="wizard-step-number">{name && phone ? '✓' : '3'}</div>
+            <div className="wizard-header-content">
+              {name && phone ? (
+                <>
+                  <div className="wizard-label">Ваши данные</div>
+                  <div className="wizard-value">{name}, {phone}</div>
+                </>
+              ) : (
+                <div className="wizard-label">Ваши данные</div>
+              )}
+            </div>
+            <span className="wizard-arrow">{name && phone ? '✎' : '▸'}</span>
+          </div>
+
+          {openSection === 'contacts' && (
+            <div className="wizard-body">
+              <div className="form">
+                <input type="text" placeholder="Имя" value={name} onChange={e => setName(e.target.value)} />
+                <input type="tel" placeholder="Телефон" value={phone} onChange={e => setPhone(e.target.value)} />
+              </div>
+            </div>
+          )}
+        </div>
+
+        <button
+          className="book-button"
+          onClick={() => setShowConfirm(true)}
+          disabled={!isFormComplete || loading}
+        >
+          Записаться
         </button>
 
         {status && <div className={`status ${status.type}`}>{status.text}</div>}
+
+        {showConfirm && (
+          <div className="modal-overlay" onClick={() => setShowConfirm(false)}>
+            <div className="modal" onClick={e => e.stopPropagation()}>
+              <h2>Подтвердите запись</h2>
+
+              <div className="modal-info">
+                <div className="modal-row">
+                  <span>🔧 Услуга</span>
+                  <b>{selectedService.name}</b>
+                </div>
+                <div className="modal-row">
+                  <span>💰 Цена</span>
+                  <b>{selectedService.price} ₽</b>
+                </div>
+                <div className="modal-row">
+                  <span>📅 Дата и время</span>
+                  <b>{formatDate(selectedDate)}, {selectedSlot.datetime.split(' ')[1]}</b>
+                </div>
+                <div className="modal-row">
+                  <span>👤 Имя</span>
+                  <b>{name}</b>
+                </div>
+                <div className="modal-row">
+                  <span>📞 Телефон</span>
+                  <b>{phone}</b>
+                </div>
+              </div>
+
+              <button className="book-button" onClick={handleBook} disabled={loading}>
+                {loading ? 'Отправка...' : 'Подтвердить'}
+              </button>
+              <button className="cancel-button" onClick={() => setShowConfirm(false)}>
+                Отмена
+              </button>
+            </div>
+          </div>
+        )}
+
+        {showSuccess && <SuccessCard onReset={() => setShowSuccess(false)} />}
       </div>
     )
   }
@@ -313,22 +471,26 @@ export default function App() {
   if (role === 'owner' && screen === 'home') {
     return (
       <div className="app">
-        <div className="hero">
-          <div className="hero-logo-placeholder">👑</div>
-          <h1>Панель владельца</h1>
-          <p className="hero-description">{tenant?.name}</p>
-        </div>
+        <FadeIn>
+          <div className="hero">
+            <div className="hero-logo-placeholder">👑</div>
+            <h1>Панель владельца</h1>
+            <p className="hero-description">{tenant?.name}</p>
+          </div>
+        </FadeIn>
 
-        <div className="admin-menu">
-          <button className="admin-item" onClick={() => setScreen('services')}>
-            <span className="admin-icon">🔧</span>
-            <span>Управление услугами</span>
-          </button>
-          <button className="admin-item" onClick={() => setScreen('appointments')}>
-            <span className="admin-icon">📋</span>
-            <span>Записи клиентов</span>
-          </button>
-        </div>
+        <FadeIn delay={100}>
+          <div className="admin-menu">
+            <button className="admin-item" onClick={() => setScreen('services')}>
+              <span className="admin-icon">🔧</span>
+              <span>Управление услугами</span>
+            </button>
+            <button className="admin-item" onClick={() => setScreen('appointments')}>
+              <span className="admin-icon">📋</span>
+              <span>Записи клиентов</span>
+            </button>
+          </div>
+        </FadeIn>
       </div>
     )
   }

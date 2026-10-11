@@ -1,4 +1,4 @@
-const API_URL = 'https://booking-backend.booking-app-andrey202.workers.dev'
+const API_URL = 'http://127.0.0.1:8787'
 
 export async function getServices() {
   const res = await fetch(`${API_URL}/api/services`)
