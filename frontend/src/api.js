@@ -44,3 +44,14 @@ export async function getSlotsByDate(date) {
   const res = await fetch(`${API_URL}/api/slots/by-date?date=${date}`)
   return res.json()
 }
+export async function getMyAppointments(telegramId) {
+  const res = await fetch(`${API_URL}/api/my-appointments?telegram_id=${telegramId}`)
+  return res.json()
+}
+
+export async function cancelAppointment(id, telegramId) {
+  const res = await fetch(`${API_URL}/api/my-appointments/${id}?telegram_id=${telegramId}`, {
+    method: 'DELETE',
+  })
+  return res.json()
+}

@@ -10,7 +10,7 @@ class Default(WorkerEntrypoint):
         # CORS-заголовки для фронтенда (Mini App)
         headers = {
             "Access-Control-Allow-Origin": "*",
-            "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+            "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
             "Access-Control-Allow-Headers": "Content-Type",
         }
         
@@ -40,8 +40,84 @@ class Default(WorkerEntrypoint):
             if check:
                 return Response.json({"role": "owner"}, headers=headers)
             
-            return Response.json({"role": "client"}, headers=headers)       # --- API для фронтенда ---
+            return Response.json({"role": "client"}, headers=headers)     # --- API для фронтенда ---
         
+        if "/api/my-appointments/" in path and request.method == "DELETE":
+            # Парсим appointment_id из пути
+            appointment_id = path.split("/api/my-appointments/")[1].split("?")[0]
+            
+            # Парсим telegram_id из query
+            parts = url.split("?")
+            query = parts[1] if len(parts) > 1 else ""
+            
+            telegram_id = None
+            if "telegram_id=" in query:
+                telegram_id = query.split("telegram_id=")[1].split("&")[0]
+            
+            if not telegram_id:
+                return Response.json(
+                    {"error": "Не передан telegram_id"},
+                    status=401,
+                    headers=headers
+                )
+            
+            # Проверяем, что запись принадлежит клиенту
+            check = await self.env.booking_db.prepare(
+                "SELECT id, slot_id FROM appointments WHERE id = ? AND telegram_id = ?"
+            ).bind(appointment_id, telegram_id).first()
+
+            if not check:
+                return Response.json(
+                    {"error": "Forbidden"},
+                    status=403,
+                    headers=headers
+                )
+            
+            # Отменяем запись и освобождаем слот
+            await self.env.booking_db.batch([
+                self.env.booking_db.prepare(
+                    "UPDATE appointments SET status = 'cancelled' WHERE id = ?"
+                ).bind(appointment_id),
+                self.env.booking_db.prepare(
+                    "UPDATE slots SET is_booked = 0 WHERE id = ?"
+                ).bind(check["slot_id"]),
+            ])
+            
+            return Response.json({"success": True}, headers=headers)
+
+        if path.endswith("/api/my-appointments"):
+            parts = url.split("?")
+            query = parts[1] if len(parts) > 1 else ""
+            
+            telegram_id = None
+            if "telegram_id=" in query:
+                telegram_id = query.split("telegram_id=")[1].split("&")[0]
+            
+            if not telegram_id:
+                return Response.json(
+                    {"error": "Не передан telegram_id"},
+                    status=401,
+                    headers=headers
+                )
+            
+            result = await self.env.booking_db.prepare(
+                """SELECT 
+                    a.id,
+                    a.user_name,
+                    a.user_phone,
+                    s.name AS service_name,
+                    s.price AS service_price,
+                    sl.datetime AS slot_datetime
+                FROM appointments a
+                JOIN services s ON s.id = a.service_id
+                JOIN slots sl ON sl.id = a.slot_id
+                WHERE a.telegram_id = ? 
+                AND a.status != 'cancelled'
+                AND sl.datetime > datetime('now')
+                ORDER BY sl.datetime"""
+            ).bind(telegram_id).all()
+            
+            return Response.json(result.results, headers=headers)        
         if path.endswith("/api/appointments"):
             parts = url.split("?")
             query = parts[1] if len(parts) > 1 else ""
@@ -328,3 +404,8 @@ class Default(WorkerEntrypoint):
         if inserts:
             await self.env.booking_db.batch(inserts)
     #await fetch(request)
+
+
+
+
+    
