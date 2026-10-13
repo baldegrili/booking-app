@@ -177,6 +177,7 @@ class Default(WorkerEntrypoint):
                 user_phone = body.get("phone")
                 service_id = body.get("service_id")
                 slot_id = body.get("slot_id")
+                telegram_id = body.get("telegram_id")
                 tenant_id = 1  # пока захардкожено
                 
                 # 2. Проверяем, что все поля пришли
@@ -209,8 +210,8 @@ class Default(WorkerEntrypoint):
                 # 4. Создаём запись и помечаем слот — атомарно
                 await self.env.booking_db.batch([
                     self.env.booking_db.prepare(
-                        "INSERT INTO appointments (tenant_id, user_name, user_phone, service_id, slot_id) VALUES (?, ?, ?, ?, ?)"
-                    ).bind(tenant_id, user_name, user_phone, service_id, slot_id),
+                        "INSERT INTO appointments (tenant_id, user_name, user_phone, service_id, slot_id, telegram_id) VALUES (?, ?, ?, ?, ?, ?)"
+                    ).bind(tenant_id, user_name, user_phone, service_id, slot_id, telegram_id),
                     self.env.booking_db.prepare(
                         "UPDATE slots SET is_booked = 1 WHERE id = ?"
                     ).bind(slot_id),

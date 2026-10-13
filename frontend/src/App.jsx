@@ -133,6 +133,7 @@ export default function App() {
         name, phone,
         service_id: selectedService.id,
         slot_id: selectedSlot.id,
+	telegram_id: String(testId),
       })
 
       if (result.success) {
