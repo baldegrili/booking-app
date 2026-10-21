@@ -82,9 +82,138 @@ class Default(WorkerEntrypoint):
                     "UPDATE slots SET is_booked = 0 WHERE id = ?"
                 ).bind(check["slot_id"]),
             ])
+            # Уведомление владельцу
+            info = await self.env.booking_db.prepare(
+                """SELECT a.user_name, a.user_phone, s.name AS service_name, sl.datetime AS slot_datetime
+                   FROM appointments a
+                   JOIN services s ON s.id = a.service_id
+                   JOIN slots sl ON sl.id = a.slot_id
+                   WHERE a.id = ?"""
+            ).bind(appointment_id).first()
+            
+            if info:
+                owner = await self.env.booking_db.prepare(
+                    "SELECT owner_telegram_id FROM tenants WHERE id = ?"
+                ).bind(1).first()
+                
+                if owner and owner["owner_telegram_id"]:
+                    message = (
+                        f"❌ <b>Клиент отменил запись</b>\n\n"
+                        f"👤 {info['user_name']}\n"
+                        f"📞 {info['user_phone']}\n"
+                        f"🔧 {info['service_name']}\n"
+                        f"📅 {info['slot_datetime']}\n\n"
+                        f"Слот освободился."
+                    )
+                    try:
+                        await self.send_telegram_message(owner["owner_telegram_id"], message)
+                    except Exception as e:
+                        print(f"Ошибка отправки: {e}")
             
             return Response.json({"success": True}, headers=headers)
+            
 
+
+        if "/api/appointments/" in path and path.endswith("/visited") and request.method == "POST":
+            appointment_id = path.split("/api/appointments/")[1].split("/visited")[0]
+            
+            try:
+                body = await request.json()
+                visited = body.get("visited")
+                telegram_id = body.get("telegram_id")
+                
+                if not all([visited is not None, telegram_id]):
+                    return Response.json(
+                        {"error": "Не все поля заполнены"},
+                        status=400,
+                        headers=headers
+                    )
+                
+                check = await self.env.booking_db.prepare(
+                    "SELECT id FROM tenants WHERE owner_telegram_id = ?"
+                ).bind(telegram_id).first()
+                
+                if not check:
+                    return Response.json(
+                        {"error": "Forbidden"},
+                        status=403,
+                        headers=headers
+                    )
+                
+                await self.env.booking_db.prepare(
+                    "UPDATE appointments SET visited = ? WHERE id = ?"
+                ).bind(visited, appointment_id).run()
+                
+                return Response.json({"success": True}, headers=headers)
+                
+            except Exception as e:
+                return Response.json(
+                    {"error": f"Ошибка сервера: {str(e)}"},
+                    status=500,
+                    headers=headers
+                )
+
+        if "/api/appointments/" in path and request.method == "GET":
+            # Извлекаем ID из пути
+            appointment_id = path.split("/api/appointments/")[1].split("?")[0]
+            
+            # Извлекаем telegram_id из query
+            parts = url.split("?")
+            query = parts[1] if len(parts) > 1 else ""
+            
+            telegram_id = None
+            if "telegram_id=" in query:
+                telegram_id = query.split("telegram_id=")[1].split("&")[0]
+            
+            if not telegram_id:
+                return Response.json(
+                    {"error": "Не передан telegram_id"},
+                    status=401,
+                    headers=headers
+                )
+            
+            # Проверяем, что это владелец
+            check = await self.env.booking_db.prepare(
+                "SELECT id FROM tenants WHERE owner_telegram_id = ?"
+            ).bind(telegram_id).first()
+            
+            if not check:
+                return Response.json(
+                    {"error": "Forbidden"},
+                    status=403,
+                    headers=headers
+                )
+            
+            tenant_id = 1
+            
+            # Получаем запись
+            result = await self.env.booking_db.prepare(
+                """SELECT 
+                    a.id,
+                    a.user_name,
+                    a.user_phone,
+                    a.created_at,
+                    a.status,
+                    a.visited,
+                    s.name AS service_name,
+                    s.price AS service_price,
+                    sl.datetime AS slot_datetime
+                FROM appointments a
+                JOIN services s ON s.id = a.service_id
+                JOIN slots sl ON sl.id = a.slot_id
+                WHERE a.id = ? AND a.tenant_id = ?
+                """
+            ).bind(appointment_id, tenant_id).first()
+            
+            if not result:
+                return Response.json(
+                    {"error": "Запись не найдена"},
+                    status=404,
+                    headers=headers
+                )
+            
+            return Response.json(result, headers=headers)
+    
         if path.endswith("/api/my-appointments"):
             parts = url.split("?")
             query = parts[1] if len(parts) > 1 else ""
@@ -117,7 +246,93 @@ class Default(WorkerEntrypoint):
                 ORDER BY sl.datetime"""
             ).bind(telegram_id).all()
             
-            return Response.json(result.results, headers=headers)        
+            return Response.json(result.results, headers=headers)   
+
+        if "/api/appointments/" in path and request.method == "DELETE":
+            # ID записи из пути
+            appointment_id = path.split("/api/appointments/")[1].split("?")[0]
+            
+            # telegram_id из query
+            parts = url.split("?")
+            query = parts[1] if len(parts) > 1 else ""
+            
+            telegram_id = None
+            if "telegram_id=" in query:
+                telegram_id = query.split("telegram_id=")[1].split("&")[0]
+            
+            if not telegram_id:
+                return Response.json(
+                    {"error": "Не передан telegram_id"},
+                    status=401,
+                    headers=headers
+                )
+            
+            # Проверка роли: владелец?
+            check = await self.env.booking_db.prepare(
+                "SELECT id FROM tenants WHERE owner_telegram_id = ?"
+            ).bind(telegram_id).first()
+            
+            if not check:
+                return Response.json(
+                    {"error": "Forbidden"},
+                    status=403,
+                    headers=headers
+                )
+            
+            tenant_id = 1
+            
+            # Получаем slot_id записи
+            appointment = await self.env.booking_db.prepare(
+                "SELECT slot_id FROM appointments WHERE id = ? AND tenant_id = ?"
+            ).bind(appointment_id, tenant_id).first()
+            
+            if not appointment:
+                return Response.json(
+                    {"error": "Запись не найдена"},
+                    status=404,
+                    headers=headers
+                )
+            
+            # Отменяем запись + освобождаем слот
+            await self.env.booking_db.batch([
+                self.env.booking_db.prepare(
+                    "UPDATE appointments SET status = 'cancelled' WHERE id = ?"
+                ).bind(appointment_id),
+                self.env.booking_db.prepare(
+                    "UPDATE slots SET is_booked = 0 WHERE id = ?"
+                ).bind(appointment["slot_id"]),
+            ])
+            
+            # Уведомление владельцу
+            info = await self.env.booking_db.prepare(
+                """SELECT a.user_name, a.user_phone, s.name AS service_name, sl.datetime AS slot_datetime
+                   FROM appointments a
+                   JOIN services s ON s.id = a.service_id
+                   JOIN slots sl ON sl.id = a.slot_id
+                   WHERE a.id = ?"""
+            ).bind(appointment_id).first()
+            
+            if info:
+                owner = await self.env.booking_db.prepare(
+                    "SELECT owner_telegram_id FROM tenants WHERE id = ?"
+                ).bind(tenant_id).first()
+                
+                if owner and owner["owner_telegram_id"]:
+                    message = (
+                        f"❌ <b>Запись отменена</b>\n\n"
+                        f"👤 {info['user_name']}\n"
+                        f"📞 {info['user_phone']}\n"
+                        f"🔧 {info['service_name']}\n"
+                        f"📅 {info['slot_datetime']}\n\n"
+                        f"Слот освободился."
+                    )
+                    try:
+                        await self.send_telegram_message(owner["owner_telegram_id"], message)
+                    except Exception as e:
+                        print(f"Ошибка отправки: {e}")
+            
+            return Response.json({"success": True}, headers=headers)          
+
         if path.endswith("/api/appointments"):
             parts = url.split("?")
             query = parts[1] if len(parts) > 1 else ""
@@ -145,15 +360,18 @@ class Default(WorkerEntrypoint):
                 )
             
             result = await self.env.booking_db.prepare(
-                """SELECT 
+                """SELECT
+                    a.id,
                     a.user_name,
                     a.user_phone,
                     s.name AS service_name,
-                    sl.datetime AS slot_datetime
+                    s.price AS service_price,
+                    sl.datetime AS slot_datetime,
+                    a.visited
                 FROM appointments a
                 JOIN services s ON s.id = a.service_id
                 JOIN slots sl ON sl.id = a.slot_id
-                WHERE a.tenant_id = ?
+                WHERE a.tenant_id = ? AND a.status != 'cancelled'
                 ORDER BY sl.datetime"""
             ).bind(1).all()
             return Response.json(result.results, headers=headers)
@@ -209,12 +427,61 @@ class Default(WorkerEntrypoint):
                 "SELECT id, name, price FROM services WHERE tenant_id = 1"
             ).all()
             return Response.json(result.results, headers=headers)
-        if path.endswith("/api/tenant"):
+        if path.endswith("/api/tenant") and request.method == "PUT":
+            try:
+                body = await request.json()
+                telegram_id = str(body.get("telegram_id", ""))
+                
+                if not telegram_id:
+                    return Response.json(
+                        {"error": "Не передан telegram_id"},
+                        status=401,
+                        headers=headers
+                    )
+                
+                check = await self.env.booking_db.prepare(
+                    "SELECT id FROM tenants WHERE owner_telegram_id = ?"
+                ).bind(telegram_id).first()
+                
+                if not check:
+                    return Response.json(
+                        {"error": "Forbidden"},
+                        status=403,
+                        headers=headers
+                    )
+                
+                tenant_id = 1
+                
+                await self.env.booking_db.prepare(
+                    """UPDATE tenants SET 
+                        name = ?, description = ?, address = ?, 
+                        phone = ?, working_hours = ?, logo_url = ?
+                       WHERE id = ?"""
+                ).bind(
+                    body.get("name"),
+                    body.get("description"),
+                    body.get("address"),
+                    body.get("phone"),
+                    body.get("working_hours"),
+                    body.get("logo_url"),
+                    tenant_id
+                ).run()
+                
+                return Response.json({"success": True}, headers=headers)
+                
+            except Exception as e:
+                return Response.json(
+                    {"error": f"Ошибка сервера: {str(e)}"},
+                    status=500,
+                    headers=headers
+                )
+        
+        if path.endswith("/api/tenant") and request.method == "GET":
             result = await self.env.booking_db.prepare(
                 """SELECT id, name, address, phone, working_hours, logo_url, description 
                    FROM tenants WHERE id = 1"""
             ).first()
-            return Response.json(result, headers=headers)       
+            return Response.json(result, headers=headers)     
 
         if path.endswith("/api/slots/by-date"):
             parts = url.split("?")
@@ -347,15 +614,28 @@ class Default(WorkerEntrypoint):
 
     async def send_telegram_message(self, chat_id, text):
         token = self.env.TELEGRAM_BOT_TOKEN
+        print(f"DEBUG: token is {'set' if token else 'NONE'}")
+        print(f"DEBUG: chat_id = {chat_id}")
+        print(f"DEBUG: text = {text[:50]}")
+        
         url = f"https://api.telegram.org/bot{token}/sendMessage"
-        request = Request(url, method="POST", 
+        request = Request(url, method="POST",
             headers={"Content-Type": "application/json"},
-            body = json.dumps({
+            body=json.dumps({
                 "chat_id": chat_id,
                 "text": text,
                 "parse_mode": "HTML"
-            }
-        ))
+            })
+        )
+        
+        try:
+            response = await fetch(request)
+            print(f"DEBUG: Telegram response status = {response.status}")
+            response_text = await response.text()
+            print(f"DEBUG: Telegram response = {response_text[:200]}")
+        except Exception as e:
+            print(f"DEBUG: fetch failed = {e}")
+            
     async def generate_slots(self, tenant_id, days_ahead=30):
         from datetime import date, timedelta
         
@@ -404,8 +684,6 @@ class Default(WorkerEntrypoint):
         if inserts:
             await self.env.booking_db.batch(inserts)
     #await fetch(request)
-
-
 
 
     

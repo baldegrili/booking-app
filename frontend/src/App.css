@@ -818,3 +818,163 @@ h2 {
   font-size: 16px;
   margin-bottom: 24px;
 }
+/* ===== Статусы записей у владельца ===== */
+.appointment-card {
+  cursor: pointer;
+  position: relative;
+}
+
+.appointment-card.visited-yes {
+  border-color: rgba(34, 197, 94, 0.5);
+  background: rgba(34, 197, 94, 0.08);
+}
+
+.appointment-card.visited-no {
+  border-color: rgba(239, 68, 68, 0.5);
+  background: rgba(239, 68, 68, 0.08);
+}
+
+.visited-badge {
+  margin-top: 8px;
+  padding: 4px 10px;
+  border-radius: 12px;
+  font-size: 12px;
+  font-weight: 600;
+  display: inline-block;
+}
+
+.visited-yes-badge {
+  background: rgba(34, 197, 94, 0.2);
+  color: #4ade80;
+}
+
+.visited-no-badge {
+  background: rgba(239, 68, 68, 0.2);
+  color: #f87171;
+}
+/* ===== Навигация по неделям ===== */
+.week-nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+  padding: 12px 16px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 14px;
+}
+
+.week-arrow {
+  background: none;
+  border: none;
+  color: #4690FF;
+  font-size: 20px;
+  cursor: pointer;
+  padding: 4px 12px;
+  font-family: inherit;
+  font-weight: 700;
+}
+
+.week-arrow:hover {
+  color: #6aa8ff;
+}
+
+.week-range {
+  font-size: 15px;
+  font-weight: 600;
+  color: #fff;
+}
+
+.today-button {
+  width: 100%;
+  padding: 10px;
+  background: rgba(70, 144, 255, 0.1);
+  color: #4690FF;
+  border: 1px solid rgba(70, 144, 255, 0.3);
+  border-radius: 10px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+  font-family: inherit;
+  margin-bottom: 20px;
+}
+
+.today-button:hover {
+  background: rgba(70, 144, 255, 0.2);
+}
+
+/* ===== Список по дням ===== */
+.week-list {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.day-block {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.day-header {
+  font-size: 14px;
+  font-weight: 700;
+  color: #888;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.day-header.today {
+  color: #4690FF;
+}
+
+.day-empty {
+  font-size: 14px;
+  color: #666;
+  font-style: italic;
+  padding: 8px 0;
+}
+
+/* ===== Карточка записи (компактная) ===== */
+.appointment-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.appointment-time-small {
+  font-size: 15px;
+  font-weight: 700;
+  color: #4690FF;
+  min-width: 50px;
+}
+
+.appointment-service-small {
+  font-size: 15px;
+  font-weight: 600;
+  color: #fff;
+  flex: 1;
+}
+
+.appointment-arrow {
+  color: #4690FF;
+  font-size: 18px;
+}
+
+.appointment-client-small {
+  font-size: 13px;
+  color: #888;
+  margin-top: 4px;
+}
+.form-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: #888;
+  margin-top: 8px;
+  margin-bottom: -2px;
+  display: block;
+}

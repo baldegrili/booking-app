@@ -1,4 +1,4 @@
-const API_URL = 'http://127.0.0.1:8787'
+const API_URL = 'https://booking-backend.booking-app-andrey202.workers.dev'
 
 export async function getServices() {
   const res = await fetch(`${API_URL}/api/services`)
@@ -52,6 +52,34 @@ export async function getMyAppointments(telegramId) {
 export async function cancelAppointment(id, telegramId) {
   const res = await fetch(`${API_URL}/api/my-appointments/${id}?telegram_id=${telegramId}`, {
     method: 'DELETE',
+  })
+  return res.json()
+}
+export async function getAppointmentById(id, telegramId) {
+  const res = await fetch(`${API_URL}/api/appointments/${id}?telegram_id=${telegramId}`)
+  return res.json()
+}
+
+export async function markVisited(id, visited, telegramId) {
+  const res = await fetch(`${API_URL}/api/appointments/${id}/visited`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ visited, telegram_id: String(telegramId) }),
+  })
+  return res.json()
+}
+
+export async function cancelAppointmentByOwner(id, telegramId) {
+  const res = await fetch(`${API_URL}/api/appointments/${id}?telegram_id=${telegramId}`, {
+    method: 'DELETE',
+  })
+  return res.json()
+}
+export async function updateTenant(data) {
+  const res = await fetch(`${API_URL}/api/tenant`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
   })
   return res.json()
 }

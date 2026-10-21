@@ -1,7 +1,12 @@
 import { useEffect, useState, useRef } from 'react'
 import { DayPicker } from 'react-day-picker'
 import 'react-day-picker/dist/style.css'
-import { getServices, getSlotsByDate, bookAppointment, getTenant, getRole, getAppointments, addService, getMyAppointments, cancelAppointment } from './api'
+import { ru } from 'date-fns/locale'
+import {
+  getServices, getSlotsByDate, bookAppointment, getTenant, getRole,
+  getAppointments, addService, getMyAppointments, cancelAppointment,
+  markVisited, cancelAppointmentByOwner, updateTenant
+} from './api'
 import './App.css'
 
 function FadeIn({ children, delay = 0 }) {
@@ -64,10 +69,17 @@ export default function App() {
   const [showConfirm, setShowConfirm] = useState(false)
   const [showSuccess, setShowSuccess] = useState(false)
   const [selectedAppointment, setSelectedAppointment] = useState(null)
+  const [selectedOwnerAppointment, setSelectedOwnerAppointment] = useState(null)
+  const [cancelOwnerTarget, setCancelOwnerTarget] = useState(null)
   const [showCancelConfirm, setShowCancelConfirm] = useState(false)
+  const [weekOffset, setWeekOffset] = useState(0)
+  const touchStartX = useRef(null)
 
   const [newService, setNewService] = useState({ name: '', price: '', description: '' })
   const [showAddForm, setShowAddForm] = useState(false)
+  const [settingsForm, setSettingsForm] = useState({
+    name: '', description: '', address: '', phone: '', working_hours: '', logo_url: ''
+  })
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
@@ -81,7 +93,19 @@ export default function App() {
 
   useEffect(() => {
     if (!testId) return
-    getTenant().then(setTenant)
+    getTenant().then(data => {
+      setTenant(data)
+      if (data) {
+        setSettingsForm({
+          name: data.name || '',
+          description: data.description || '',
+          address: data.address || '',
+          phone: data.phone || '',
+          working_hours: data.working_hours || '',
+          logo_url: data.logo_url || ''
+        })
+      }
+    })
     getServices().then(setServices)
     getRole(testId).then(data => setRole(data.role))
     getMyAppointments(testId).then(data => {
@@ -122,7 +146,6 @@ export default function App() {
     if (!datetime) return ''
     const [datePart, timePart] = datetime.split(' ')
     const [year, month, day] = datePart.split('-')
-    const date = new Date(year, month - 1, day)
     const months = ['января', 'февраля', 'марта', 'апреля', 'мая', 'июня', 'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря']
     return `${day} ${months[month - 1]}, ${timePart.slice(0, 5)}`
   }
@@ -214,6 +237,29 @@ export default function App() {
     }
   }
 
+  const handleSaveSettings = async () => {
+    setLoading(true)
+    setStatus(null)
+    try {
+      const result = await updateTenant({
+        ...settingsForm,
+        telegram_id: String(testId)
+      })
+      
+      if (result.success) {
+        setStatus({ type: 'success', text: 'Настройки сохранены!' })
+        const updated = await getTenant()
+        setTenant(updated)
+      } else {
+        setStatus({ type: 'error', text: result.error || 'Ошибка сохранения' })
+      }
+    } catch (e) {
+      setStatus({ type: 'error', text: 'Ошибка соединения с сервером' })
+    } finally {
+      setLoading(false)
+    }
+  }
+
   // --- Экран "Мои записи" (клиент) ---
   if (screen === 'myAppointments') {
     return (
@@ -287,6 +333,7 @@ export default function App() {
             </div>
           </div>
         )}
+
         {showCancelConfirm && selectedAppointment && (
           <div className="modal-overlay" onClick={() => setShowCancelConfirm(false)}>
             <div className="modal" onClick={e => e.stopPropagation()}>
@@ -370,23 +417,320 @@ export default function App() {
     )
   }
 
+  // --- Настройки сервиса (владелец) ---
+  if (screen === 'settings') {
+    return (
+      <div className="app">
+        <button className="back-button" onClick={() => setScreen('home')}>← Назад</button>
+        <h1>Настройки сервиса</h1>
+
+        <div className="form" style={{ marginTop: 16 }}>
+          <label className="form-label">Название</label>
+          <input 
+            type="text" 
+            placeholder="Автосервис на Ленина" 
+            value={settingsForm.name} 
+            onChange={e => setSettingsForm({ ...settingsForm, name: e.target.value })} 
+          />
+
+          <label className="form-label">Описание</label>
+          <input 
+            type="text" 
+            placeholder="Ремонт и обслуживание авто" 
+            value={settingsForm.description} 
+            onChange={e => setSettingsForm({ ...settingsForm, description: e.target.value })} 
+          />
+
+          <label className="form-label">Адрес</label>
+          <input 
+            type="text" 
+            placeholder="г. Москва, ул. Ленина, д. 10" 
+            value={settingsForm.address} 
+            onChange={e => setSettingsForm({ ...settingsForm, address: e.target.value })} 
+          />
+
+          <label className="form-label">Телефон</label>
+          <input 
+            type="tel" 
+            placeholder="+7 (999) 123-45-67" 
+            value={settingsForm.phone} 
+            onChange={e => setSettingsForm({ ...settingsForm, phone: e.target.value })} 
+          />
+
+          <label className="form-label">Часы работы</label>
+          <input 
+            type="text" 
+            placeholder="Пн–Сб: 9:00–20:00" 
+            value={settingsForm.working_hours} 
+            onChange={e => setSettingsForm({ ...settingsForm, working_hours: e.target.value })} 
+          />
+
+          <label className="form-label">Логотип (URL)</label>
+          <input 
+            type="text" 
+            placeholder="https://example.com/logo.png" 
+            value={settingsForm.logo_url} 
+            onChange={e => setSettingsForm({ ...settingsForm, logo_url: e.target.value })} 
+          />
+
+          <button className="book-button" onClick={handleSaveSettings} disabled={loading}>
+            {loading ? 'Сохранение...' : 'Сохранить'}
+          </button>
+        </div>
+
+        {status && <div className={`status ${status.type}`}>{status.text}</div>}
+      </div>
+    )
+  }
+
   // --- Записи клиентов (владелец) ---
   if (screen === 'appointments') {
+    const groupedByDate = {}
+    appointments.forEach(a => {
+      const date = a.slot_datetime.split(' ')[0]
+      if (!groupedByDate[date]) groupedByDate[date] = []
+      groupedByDate[date].push(a)
+    })
+
+    const getWeekDays = (offset) => {
+      const today = new Date()
+      const dayOfWeek = today.getDay()
+      const mondayOffset = dayOfWeek === 0 ? -6 : 1 - dayOfWeek
+      const monday = new Date(today)
+      monday.setDate(today.getDate() + mondayOffset + offset * 7)
+
+      const days = []
+      for (let i = 0; i < 7; i++) {
+        const d = new Date(monday)
+        d.setDate(monday.getDate() + i)
+        days.push(d)
+      }
+      return days
+    }
+
+    const weekDays = getWeekDays(weekOffset)
+    const dayNames = ['Воскресенье', 'Понедельник', 'Вторник', 'Среда', 'Четверг', 'Пятница', 'Суббота']
+    const months = ['января', 'февраля', 'марта', 'апреля', 'мая', 'июня', 'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря']
+
+    const formatDayLabel = (date) => {
+      const dayName = dayNames[date.getDay()]
+      const dayNum = date.getDate()
+      const monthName = months[date.getMonth()]
+      return `${dayName}, ${dayNum} ${monthName}`
+    }
+
+    const formatWeekRange = () => {
+      const first = weekDays[0]
+      const last = weekDays[6]
+      return `${first.getDate()} – ${last.getDate()} ${months[last.getMonth()]}`
+    }
+
+    const dateKey = (date) => {
+      const y = date.getFullYear()
+      const m = String(date.getMonth() + 1).padStart(2, '0')
+      const d = String(date.getDate()).padStart(2, '0')
+      return `${y}-${m}-${d}`
+    }
+
+    const handleTouchStart = (e) => {
+      touchStartX.current = e.touches[0].clientX
+    }
+    const handleTouchEnd = (e) => {
+      if (!touchStartX.current) return
+      const diff = e.changedTouches[0].clientX - touchStartX.current
+      if (Math.abs(diff) > 60) {
+        if (diff > 0) setWeekOffset(weekOffset - 1)
+        else setWeekOffset(weekOffset + 1)
+      }
+      touchStartX.current = null
+    }
+
     return (
       <div className="app">
         <button className="back-button" onClick={() => setScreen('home')}>← Назад</button>
         <h1>Записи клиентов</h1>
-        <div className="list">
-          {appointments.length === 0 && <div className="empty">Записей пока нет</div>}
-          {appointments.map((a, i) => (
-            <div key={i} className="appointment-card">
-              <div className="appointment-time">📅 {a.slot_datetime}</div>
-              <div className="appointment-service">🔧 {a.service_name}</div>
-              <div className="appointment-client">👤 {a.user_name}</div>
-              <div className="appointment-phone">📞 <a href={`tel:${a.user_phone}`}>{a.user_phone}</a></div>
-            </div>
-          ))}
+
+        <div className="week-nav">
+          <button className="week-arrow" onClick={() => setWeekOffset(weekOffset - 1)}>◀</button>
+          <div className="week-range">{formatWeekRange()}</div>
+          <button className="week-arrow" onClick={() => setWeekOffset(weekOffset + 1)}>▶</button>
         </div>
+
+        <button className="today-button" onClick={() => setWeekOffset(0)}>
+          Сегодня
+        </button>
+
+        <div
+          className="week-list"
+          onTouchStart={handleTouchStart}
+          onTouchEnd={handleTouchEnd}
+        >
+          {weekDays.map(day => {
+            const key = dateKey(day)
+            const dayAppointments = groupedByDate[key] || []
+            const isToday = key === dateKey(new Date())
+
+            return (
+              <div key={key} className="day-block">
+                <div className={`day-header ${isToday ? 'today' : ''}`}>
+                  {formatDayLabel(day)}
+                </div>
+
+                {dayAppointments.length === 0 ? (
+                  <div className="day-empty">Нет записей</div>
+                ) : (
+                  <div className="list">
+                    {dayAppointments.map(a => (
+                      <div
+                        key={a.id}
+                        className={`appointment-card ${a.visited === 1 ? 'visited-yes' : ''} ${a.visited === 2 ? 'visited-no' : ''}`}
+                        onClick={() => setSelectedOwnerAppointment(a)}
+                      >
+                        <div className="appointment-row">
+                          <span className="appointment-time-small">
+                            {a.slot_datetime.split(' ')[1]}
+                          </span>
+                          <span className="appointment-service-small">
+                            {a.service_name}
+                          </span>
+                          <span className="appointment-arrow">▸</span>
+                        </div>
+                        <div className="appointment-client-small">
+                          👤 {a.user_name}
+                        </div>
+                        {a.visited === 1 && <div className="visited-badge visited-yes-badge">✅ Был</div>}
+                        {a.visited === 2 && <div className="visited-badge visited-no-badge">❌ Не пришёл</div>}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )
+          })}
+        </div>
+
+        {selectedOwnerAppointment && (
+          <div className="modal-overlay" onClick={() => setSelectedOwnerAppointment(null)}>
+            <div className="modal" onClick={e => e.stopPropagation()}>
+              <h2>Запись</h2>
+              <div className="modal-info">
+                <div className="modal-row">
+                  <span>🔧 Услуга</span>
+                  <b>{selectedOwnerAppointment.service_name}</b>
+                </div>
+                <div className="modal-row">
+                  <span>💰 Цена</span>
+                  <b>{selectedOwnerAppointment.service_price} ₽</b>
+                </div>
+                <div className="modal-row">
+                  <span>📅 Дата и время</span>
+                  <b>{selectedOwnerAppointment.slot_datetime}</b>
+                </div>
+                <div className="modal-row">
+                  <span>👤 Имя</span>
+                  <b>{selectedOwnerAppointment.user_name}</b>
+                </div>
+                <div className="modal-row">
+                  <span>📞 Телефон</span>
+                  <b>{selectedOwnerAppointment.user_phone}</b>
+                </div>
+              </div>
+
+              <a
+                href={`tel:${selectedOwnerAppointment.user_phone}`}
+                className="book-button"
+                style={{ display: 'block', textAlign: 'center', textDecoration: 'none', marginTop: 12 }}
+              >
+                📞 Позвонить
+              </a>
+
+              <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
+                <button
+                  className="book-button"
+                  style={{ flex: 1, marginTop: 0, background: 'linear-gradient(135deg, #22c55e, #16a34a)' }}
+                  onClick={async () => {
+                    await markVisited(selectedOwnerAppointment.id, 1, testId)
+                    const updated = await getAppointments(testId)
+                    if (Array.isArray(updated)) setAppointments(updated)
+                    setSelectedOwnerAppointment(null)
+                  }}
+                >
+                  ✅ Был
+                </button>
+                <button
+                  className="cancel-button"
+                  style={{ flex: 1, marginTop: 0 }}
+                  onClick={async () => {
+                    await markVisited(selectedOwnerAppointment.id, 2, testId)
+                    const updated = await getAppointments(testId)
+                    if (Array.isArray(updated)) setAppointments(updated)
+                    setSelectedOwnerAppointment(null)
+                  }}
+                >
+                  ❌ Не пришёл
+                </button>
+              </div>
+
+              <button
+                className="cancel-button"
+                style={{ marginTop: 10 }}
+                onClick={() => {
+                  setCancelOwnerTarget(selectedOwnerAppointment)
+                  setSelectedOwnerAppointment(null)
+                }}
+              >
+                Отменить запись
+              </button>
+
+              <button
+                className="back-button"
+                style={{ textAlign: 'center', width: '100%', marginTop: 10 }}
+                onClick={() => setSelectedOwnerAppointment(null)}
+              >
+                Закрыть
+              </button>
+            </div>
+          </div>
+        )}
+
+        {cancelOwnerTarget && (
+          <div className="modal-overlay" onClick={() => setCancelOwnerTarget(null)}>
+            <div className="modal" onClick={e => e.stopPropagation()}>
+              <h2>Отменить запись?</h2>
+              <div className="modal-info">
+                <div className="modal-row">
+                  <span>👤 Имя</span>
+                  <b>{cancelOwnerTarget.user_name}</b>
+                </div>
+                <div className="modal-row">
+                  <span>📅 Дата</span>
+                  <b>{cancelOwnerTarget.slot_datetime}</b>
+                </div>
+              </div>
+              <p style={{ color: '#888', fontSize: 14, marginBottom: 20, textAlign: 'center' }}>
+                Слот освободится, клиент получит уведомление
+              </p>
+              <button
+                className="cancel-button"
+                onClick={async () => {
+                  await cancelAppointmentByOwner(cancelOwnerTarget.id, testId)
+                  const updated = await getAppointments(testId)
+                  if (Array.isArray(updated)) setAppointments(updated)
+                  setCancelOwnerTarget(null)
+                }}
+              >
+                Да, отменить
+              </button>
+              <button
+                className="back-button"
+                style={{ textAlign: 'center', width: '100%', marginTop: 10 }}
+                onClick={() => setCancelOwnerTarget(null)}
+              >
+                Нет, оставить
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     )
   }
@@ -497,7 +841,8 @@ export default function App() {
                   selected={selectedDate}
                   onSelect={setSelectedDate}
                   disabled={{ before: new Date() }}
-                  weekdaysShort={['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс']}
+		  locale={ru}
+                  weekStartsOn={1}
                 />
               </div>
 
@@ -591,7 +936,7 @@ export default function App() {
         </FadeIn>
 
         <FadeIn delay={100}>
-          <div className="admin-menu">
+                    <div className="admin-menu">
             <button className="admin-item" onClick={() => setScreen('services')}>
               <span className="admin-icon">🔧</span>
               <span>Управление услугами</span>
@@ -599,6 +944,10 @@ export default function App() {
             <button className="admin-item" onClick={() => setScreen('appointments')}>
               <span className="admin-icon">📋</span>
               <span>Записи клиентов</span>
+            </button>
+            <button className="admin-item" onClick={() => setScreen('settings')}>
+              <span className="admin-icon">⚙️</span>
+              <span>Настройки сервиса</span>
             </button>
           </div>
         </FadeIn>
