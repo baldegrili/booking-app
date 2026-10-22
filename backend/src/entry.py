@@ -6,11 +6,12 @@ class Default(WorkerEntrypoint):
     async def fetch(self, request):
         url = str(request.url)
         path = url.split("?")[0]
+        print(f"DEBUG: method={request.method}, path={path}")
         
         # CORS-заголовки для фронтенда (Mini App)
         headers = {
             "Access-Control-Allow-Origin": "*",
-            "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
+            "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
             "Access-Control-Allow-Headers": "Content-Type",
         }
         
@@ -416,6 +417,90 @@ class Default(WorkerEntrypoint):
                     headers=headers
                 )
 
+            except Exception as e:
+                return Response.json(
+                    {"error": f"Ошибка сервера: {str(e)}"},
+                    status=500,
+                    headers=headers
+                )        
+        if "/api/services/" in path and request.method == "PUT":
+            
+            try:
+                service_id = path.split("/api/services/")[1].split("?")[0]
+                #print(f"DEBUG: PUT SERVICES triggered, service_id={service_id}")
+                
+                body = await request.json()
+                telegram_id = str(body.get("telegram_id", ""))
+                name = body.get("name")
+                price = body.get("price")
+                description = body.get("description")
+                
+                if not telegram_id:
+                    return Response.json(
+                        {"error": "Не передан telegram_id"},
+                        status=401,
+                        headers=headers
+                    )
+                
+                check = await self.env.booking_db.prepare(
+                    "SELECT id FROM tenants WHERE owner_telegram_id = ?"
+                ).bind(telegram_id).first()
+                
+                if not check:
+                    return Response.json(
+                        {"error": "Forbidden"},
+                        status=403,
+                        headers=headers
+                    )
+                
+                await self.env.booking_db.prepare(
+                    "UPDATE services SET name = ?, price = ?, description = ? WHERE id = ? AND tenant_id = ?"
+                ).bind(name, price, description, service_id, 1).run()
+                
+                return Response.json({"success": True}, headers=headers)
+                
+            except Exception as e:
+                return Response.json(
+                    {"error": f"Ошибка сервера: {str(e)}"},
+                    status=500,
+                    headers=headers
+                )
+
+        if "/api/services/" in path and request.method == "DELETE":
+            try:
+                service_id = path.split("/api/services/")[1].split("?")[0]
+                
+                parts = url.split("?")
+                query = parts[1] if len(parts) > 1 else ""
+                
+                telegram_id = None
+                if "telegram_id=" in query:
+                    telegram_id = query.split("telegram_id=")[1].split("&")[0]
+                
+                if not telegram_id:
+                    return Response.json(
+                        {"error": "Не передан telegram_id"},
+                        status=401,
+                        headers=headers
+                    )
+                
+                check = await self.env.booking_db.prepare(
+                    "SELECT id FROM tenants WHERE owner_telegram_id = ?"
+                ).bind(telegram_id).first()
+                
+                if not check:
+                    return Response.json(
+                        {"error": "Forbidden"},
+                        status=403,
+                        headers=headers
+                    )
+                
+                await self.env.booking_db.prepare(
+                    "DELETE FROM services WHERE id = ? AND tenant_id = ?"
+                ).bind(service_id, 1).run()
+                
+                return Response.json({"success": True}, headers=headers)
+                
             except Exception as e:
                 return Response.json(
                     {"error": f"Ошибка сервера: {str(e)}"},

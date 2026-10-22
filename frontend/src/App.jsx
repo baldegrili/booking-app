@@ -5,7 +5,8 @@ import { ru } from 'date-fns/locale'
 import {
   getServices, getSlotsByDate, bookAppointment, getTenant, getRole,
   getAppointments, addService, getMyAppointments, cancelAppointment,
-  markVisited, cancelAppointmentByOwner, updateTenant
+  markVisited, cancelAppointmentByOwner, updateTenant,
+  updateService, deleteService
 } from './api'
 import './App.css'
 
@@ -74,6 +75,9 @@ export default function App() {
   const [showCancelConfirm, setShowCancelConfirm] = useState(false)
   const [weekOffset, setWeekOffset] = useState(0)
   const touchStartX = useRef(null)
+  const [editingService, setEditingService] = useState(null)
+  const [editForm, setEditForm] = useState({ name: '', price: '', description: '' })
+  const [deleteTarget, setDeleteTarget] = useState(null)
 
   const [newService, setNewService] = useState({ name: '', price: '', description: '' })
   const [showAddForm, setShowAddForm] = useState(false)
@@ -259,7 +263,69 @@ export default function App() {
       setLoading(false)
     }
   }
+  const handleEditService = (service) => {
+    setEditingService(service)
+    setEditForm({
+      name: service.name,
+      price: service.price,
+      description: service.description || ''
+    })
+  }
 
+  const handleSaveEdit = async () => {
+    if (!editForm.name.trim() || !editForm.price) {
+      setStatus({ type: 'error', text: 'Заполните название и цену' })
+      return
+    }
+    setLoading(true)
+    try {
+      console.log('Отправка данных:', {
+        name: editForm.name,
+        price: Number(editForm.price),
+        description: editForm.description,
+        telegram_id: String(testId)
+      })
+      const result = await updateService(editingService.id, {
+        name: editForm.name,
+        price: Number(editForm.price),
+        description: editForm.description,
+        telegram_id: String(testId)
+      })
+      console.log('Ответ от сервера:', result)
+      if (result.success) {
+        const updated = await getServices()
+        setServices(updated)
+        setEditingService(null)
+        setStatus({ type: 'success', text: 'Услуга обновлена' })
+      } else {
+        setStatus({ type: 'error', text: result.error || 'Ошибка' })
+      }
+    } catch (e) {
+      setStatus({ type: 'error', text: 'Ошибка соединения' })
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleDeleteService = async () => {
+    if (!deleteTarget) return
+    setLoading(true)
+    try {
+      const result = await deleteService(deleteTarget.id, testId)
+      if (result.success) {
+        const updated = await getServices()
+        setServices(updated)
+        setDeleteTarget(null)
+        setStatus({ type: 'success', text: 'Услуга удалена' })
+      } else {
+        setStatus({ type: 'error', text: result.error || 'Ошибка' })
+      }
+    } catch (e) {
+      setStatus({ type: 'error', text: 'Ошибка соединения' })
+    } finally {
+      setLoading(false)
+    }
+  }
   // --- Экран "Мои записи" (клиент) ---
   if (screen === 'myAppointments') {
     return (
@@ -376,21 +442,22 @@ export default function App() {
   }
 
   // --- Управление услугами (владелец) ---
+    // --- Управление услугами (владелец) ---
   if (screen === 'services') {
     return (
       <div className="app">
         <button className="back-button" onClick={() => setScreen('home')}>← Назад</button>
         <h1>Управление услугами</h1>
 
-        {!showAddForm && (
+        {!showAddForm && !editingService && (
           <button className="book-button" onClick={() => setShowAddForm(true)}>
             ➕ Добавить услугу
           </button>
         )}
 
-        {showAddForm && (
+        {showAddForm && !editingService && (
           <div className="form" style={{ marginTop: 16 }}>
-            <input type="text" placeholder="Название услуги" value={newService.name} onChange={e => setNewService({ ...newService, name: e.target.value })} />
+            <input type="text" placeholder="Название" value={newService.name} onChange={e => setNewService({ ...newService, name: e.target.value })} />
             <input type="number" placeholder="Цена, ₽" value={newService.price} onChange={e => setNewService({ ...newService, price: e.target.value })} />
             <input type="text" placeholder="Описание" value={newService.description} onChange={e => setNewService({ ...newService, description: e.target.value })} />
             <button className="book-button" onClick={handleAddService} disabled={loading}>
@@ -402,17 +469,76 @@ export default function App() {
           </div>
         )}
 
+        {editingService && (
+          <div className="form" style={{ marginTop: 16 }}>
+            <input type="text" placeholder="Название" value={editForm.name} onChange={e => setEditForm({ ...editForm, name: e.target.value })} />
+            <input type="number" placeholder="Цена, ₽" value={editForm.price} onChange={e => setEditForm({ ...editForm, price: e.target.value })} />
+            <input type="text" placeholder="Описание" value={editForm.description} onChange={e => setEditForm({ ...editForm, description: e.target.value })} />
+            <button className="book-button" onClick={handleSaveEdit} disabled={loading}>
+              {loading ? 'Сохранение...' : 'Сохранить изменения'}
+            </button>
+            <button className="cancel-button" onClick={() => { setEditingService(null); setStatus(null) }}>
+              Отмена
+            </button>
+          </div>
+        )}
+
         {status && <div className={`status ${status.type}`}>{status.text}</div>}
 
         <h2>Все услуги</h2>
         <div className="list">
           {services.map(s => (
-            <div key={s.id} className="card">
-              <b>{s.name}</b>
-              <span>{s.price} ₽</span>
+            <div key={s.id} className="card" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
+              <div style={{ flex: 1 }}>
+                <b>{s.name}</b>
+                <div style={{ fontSize: 13, color: '#888', marginTop: 2 }}>{s.price} ₽</div>
+              </div>
+              <div style={{ display: 'flex', gap: 6 }}>
+                <button
+                  className="icon-button"
+                  onClick={(e) => { e.stopPropagation(); handleEditService(s) }}
+                  title="Редактировать"
+                >
+                  ✎
+                </button>
+                <button
+                  className="icon-button icon-button-danger"
+                  onClick={(e) => { e.stopPropagation(); setDeleteTarget(s) }}
+                  title="Удалить"
+                >
+                  🗑
+                </button>
+              </div>
             </div>
           ))}
         </div>
+
+        {deleteTarget && (
+          <div className="modal-overlay" onClick={() => setDeleteTarget(null)}>
+            <div className="modal" onClick={e => e.stopPropagation()}>
+              <h2>Удалить услугу?</h2>
+              <div className="modal-info">
+                <div className="modal-row">
+                  <span>Услуга</span>
+                  <b>{deleteTarget.name}</b>
+                </div>
+                <div className="modal-row">
+                  <span>Цена</span>
+                  <b>{deleteTarget.price} ₽</b>
+                </div>
+              </div>
+              <p style={{ color: '#888', fontSize: 14, marginBottom: 20, textAlign: 'center' }}>
+                Это действие нельзя отменить
+              </p>
+              <button className="cancel-button" onClick={handleDeleteService} disabled={loading}>
+                {loading ? 'Удаление...' : 'Да, удалить'}
+              </button>
+              <button className="back-button" style={{ textAlign: 'center', width: '100%', marginTop: 10 }} onClick={() => setDeleteTarget(null)}>
+                Отмена
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     )
   }

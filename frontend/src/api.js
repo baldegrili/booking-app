@@ -83,3 +83,18 @@ export async function updateTenant(data) {
   })
   return res.json()
 }
+export async function updateService(id, data) {
+  const res = await fetch(`${API_URL}/api/services/${id}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  })
+  return res.json()
+}
+
+export async function deleteService(id, telegramId) {
+  const res = await fetch(`${API_URL}/api/services/${id}?telegram_id=${telegramId}`, {
+    method: 'DELETE',
+  })
+  return res.json()
+}
