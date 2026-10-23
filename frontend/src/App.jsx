@@ -6,7 +6,7 @@ import {
   getServices, getSlotsByDate, bookAppointment, getTenant, getRole,
   getAppointments, addService, getMyAppointments, cancelAppointment,
   markVisited, cancelAppointmentByOwner, updateTenant,
-  updateService, deleteService
+  updateService, deleteService, getSchedules, updateSchedules
 } from './api'
 import './App.css'
 
@@ -65,6 +65,8 @@ export default function App() {
   const [phone, setPhone] = useState('')
   const [status, setStatus] = useState(null)
   const [loading, setLoading] = useState(false)
+  const [schedules, setSchedules] = useState([])
+  const [slotDuration, setSlotDuration] = useState(120)
 
   const [openSection, setOpenSection] = useState('service')
   const [showConfirm, setShowConfirm] = useState(false)
@@ -140,6 +142,14 @@ export default function App() {
       })
     }
   }, [screen, testId])
+  useEffect(() => {
+    if (screen === 'schedule') {
+      getSchedules().then(data => {
+        if (data.schedules) setSchedules(data.schedules)
+        if (data.slot_duration) setSlotDuration(data.slot_duration)
+      })
+    }
+  }, [screen])
 
   const formatDate = (date) => {
     if (!date) return ''
@@ -326,6 +336,28 @@ export default function App() {
       setLoading(false)
     }
   }
+
+  const handleSaveSchedule = async () => {
+    setLoading(true)
+    setStatus(null)
+    try {
+      const result = await updateSchedules({
+        telegram_id: String(testId),
+        slot_duration: slotDuration,
+        schedules: schedules
+      })
+      if (result.success) {
+        setStatus({ type: 'success', text: 'Расписание сохранено!' })
+      } else {
+        setStatus({ type: 'error', text: result.error || 'Ошибка' })
+      }
+    } catch (e) {
+      setStatus({ type: 'error', text: 'Ошибка соединения' })
+    } finally {
+      setLoading(false)
+    }
+  }
+
   // --- Экран "Мои записи" (клиент) ---
   if (screen === 'myAppointments') {
     return (
@@ -539,6 +571,77 @@ export default function App() {
             </div>
           </div>
         )}
+      </div>
+    )
+  }
+
+  // --- Расписание (владелец) ---
+  if (screen === 'schedule') {
+    const dayNames = ['Понедельник', 'Вторник', 'Среда', 'Четверг', 'Пятница', 'Суббота', 'Воскресенье']
+    
+    const updateDay = (dayOfWeek, field, value) => {
+      setSchedules(prev => prev.map(s => 
+        s.day_of_week === dayOfWeek ? { ...s, [field]: value } : s
+      ))
+    }
+
+    return (
+      <div className="app">
+        <button className="back-button" onClick={() => setScreen('home')}>← Назад</button>
+        <h1>Расписание</h1>
+
+        <h2>Длительность слота</h2>
+        <div className="slot-duration-buttons">
+          {[60, 120, 180].map(d => (
+            <button
+              key={d}
+              className={`duration-btn ${slotDuration === d ? 'active' : ''}`}
+              onClick={() => setSlotDuration(d)}
+            >
+              {d === 60 ? '1 час' : d === 120 ? '2 часа' : '3 часа'}
+            </button>
+          ))}
+        </div>
+
+        <h2>Рабочие дни</h2>
+        <div className="list">
+          {schedules.sort((a, b) => a.day_of_week - b.day_of_week).map(s => (
+            <div key={s.day_of_week} className="schedule-row">
+              <div className="schedule-day-name">{dayNames[s.day_of_week]}</div>
+              
+              <label className="schedule-checkbox">
+                <input
+                  type="checkbox"
+                  checked={s.is_working === 1}
+                  onChange={e => updateDay(s.day_of_week, 'is_working', e.target.checked ? 1 : 0)}
+                />
+                <span>{s.is_working === 1 ? 'Рабочий' : 'Выходной'}</span>
+              </label>
+
+              {s.is_working === 1 && (
+                <div className="schedule-times">
+                  <input
+                    type="time"
+                    value={s.start_time}
+                    onChange={e => updateDay(s.day_of_week, 'start_time', e.target.value)}
+                  />
+                  <span>—</span>
+                  <input
+                    type="time"
+                    value={s.end_time}
+                    onChange={e => updateDay(s.day_of_week, 'end_time', e.target.value)}
+                  />
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+
+        <button className="book-button" onClick={handleSaveSchedule} disabled={loading}>
+          {loading ? 'Сохранение...' : 'Сохранить'}
+        </button>
+
+        {status && <div className={`status ${status.type}`}>{status.text}</div>}
       </div>
     )
   }
@@ -1074,6 +1177,10 @@ export default function App() {
             <button className="admin-item" onClick={() => setScreen('settings')}>
               <span className="admin-icon">⚙️</span>
               <span>Настройки сервиса</span>
+            </button>
+            <button className="admin-item" onClick={() => setScreen('schedule')}>
+              <span className="admin-icon">📅</span>
+              <span>Расписание</span>
             </button>
           </div>
         </FadeIn>

@@ -98,3 +98,16 @@ export async function deleteService(id, telegramId) {
   })
   return res.json()
 }
+export async function getSchedules() {
+  const res = await fetch(`${API_URL}/api/schedules`)
+  return res.json()
+}
+
+export async function updateSchedules(data) {
+  const res = await fetch(`${API_URL}/api/schedules`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  })
+  return res.json()
+}

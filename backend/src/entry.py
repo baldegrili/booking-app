@@ -560,7 +560,58 @@ class Default(WorkerEntrypoint):
                     status=500,
                     headers=headers
                 )
-        
+        if path.endswith("/api/schedules") and request.method == "GET":
+            result = await self.env.booking_db.prepare(
+                "SELECT day_of_week, start_time, end_time, is_working FROM schedules WHERE tenant_id = 1 ORDER BY day_of_week"
+            ).all()
+            tenant = await self.env.booking_db.prepare(
+                "SELECT slot_duration FROM tenants WHERE id = 1"
+            ).first()
+            return Response.json({
+                "schedules": result.results,
+                "slot_duration": tenant["slot_duration"] if tenant else 120
+            }, headers=headers)
+
+        if path.endswith("/api/schedules") and request.method == "PUT":
+            try:
+                body = await request.json()
+                telegram_id = str(body.get("telegram_id", ""))
+                
+                if not telegram_id:
+                    return Response.json({"error": "Не передан telegram_id"}, status=401, headers=headers)
+                
+                check = await self.env.booking_db.prepare(
+                    "SELECT id FROM tenants WHERE owner_telegram_id = ?"
+                ).bind(telegram_id).first()
+                
+                if not check:
+                    return Response.json({"error": "Forbidden"}, status=403, headers=headers)
+                
+                schedules = body.get("schedules", [])
+                slot_duration = body.get("slot_duration")
+                
+                if slot_duration:
+                    await self.env.booking_db.prepare(
+                        "UPDATE tenants SET slot_duration = ? WHERE id = 1"
+                    ).bind(slot_duration).run()
+                
+                for s in schedules:
+                    await self.env.booking_db.prepare(
+                        """UPDATE schedules SET start_time = ?, end_time = ?, is_working = ? 
+                           WHERE tenant_id = 1 AND day_of_week = ?"""
+                    ).bind(s["start_time"], s["end_time"], s["is_working"], s["day_of_week"]).run()
+                
+                await self.env.booking_db.prepare(
+                    """DELETE FROM slots 
+                        WHERE tenant_id = 1 
+                        AND is_booked = 0 
+                        AND datetime > datetime('now')
+                        AND id NOT IN (SELECT slot_id FROM appointments)"""
+                ).run()
+                
+                return Response.json({"success": True}, headers=headers)
+            except Exception as e:
+                return Response.json({"error": f"Ошибка: {str(e)}"}, status=500, headers=headers)        
         if path.endswith("/api/tenant") and request.method == "GET":
             result = await self.env.booking_db.prepare(
                 """SELECT id, name, address, phone, working_hours, logo_url, description 

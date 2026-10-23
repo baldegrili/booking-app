@@ -1007,3 +1007,82 @@ h2 {
   background: rgba(239, 68, 68, 0.15);
   border-color: rgba(239, 68, 68, 0.4);
 }
+/* Длительность слота */
+.slot-duration-buttons {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.duration-btn {
+  flex: 1;
+  padding: 12px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+  color: #fff;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+  font-family: inherit;
+}
+
+.duration-btn.active {
+  background: #4690FF;
+  border-color: #4690FF;
+  box-shadow: 0 4px 16px rgba(70, 144, 255, 0.4);
+}
+
+/* Расписание */
+.schedule-row {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 14px;
+  padding: 16px;
+  margin-bottom: 10px;
+}
+
+.schedule-day-name {
+  font-size: 15px;
+  font-weight: 700;
+  margin-bottom: 10px;
+  color: #fff;
+}
+
+.schedule-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  color: #e0e0e0;
+  cursor: pointer;
+  margin-bottom: 10px;
+}
+
+.schedule-checkbox input {
+  width: 18px;
+  height: 18px;
+  accent-color: #4690FF;
+}
+
+.schedule-times {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.schedule-times input {
+  flex: 1;
+  padding: 10px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+  color: #fff;
+  font-size: 14px;
+  font-family: inherit;
+}
+
+.schedule-times span {
+  color: #888;
+}
