@@ -3,9 +3,24 @@ import json
 
 
 class Default(WorkerEntrypoint):
+    def get_tenant_id(self, request_url, body=None):
+        # Из тела (для POST/PUT)
+        if body and body.get("tenant_id"):
+            return int(body["tenant_id"])
+            
+        # Из URL (для GET)
+        if "tenant_id=" in request_url:
+            try:
+                return int(request_url.split("tenant_id=")[1].split("&")[0])
+            except:
+                pass
+            
+        # Fallback
+        return 1
     async def fetch(self, request):
         url = str(request.url)
         path = url.split("?")[0]
+        tenant_id = self.get_tenant_id(url)
         print(f"DEBUG: method={request.method}, path={path}")
         
         # CORS-заголовки для фронтенда (Mini App)
@@ -112,8 +127,6 @@ class Default(WorkerEntrypoint):
                         print(f"Ошибка отправки: {e}")
             
             return Response.json({"success": True}, headers=headers)
-            
-
 
         if "/api/appointments/" in path and path.endswith("/visited") and request.method == "POST":
             appointment_id = path.split("/api/appointments/")[1].split("/visited")[0]
@@ -185,7 +198,7 @@ class Default(WorkerEntrypoint):
                     headers=headers
                 )
             
-            tenant_id = 1
+            tenant_id = self.get_tenant_id(url)
             
             # Получаем запись
             result = await self.env.booking_db.prepare(
@@ -229,7 +242,7 @@ class Default(WorkerEntrypoint):
                     status=401,
                     headers=headers
                 )
-            
+            tenant_id = self.get_tenant_id(url)
             result = await self.env.booking_db.prepare(
                 """SELECT 
                     a.id,
@@ -241,11 +254,12 @@ class Default(WorkerEntrypoint):
                 FROM appointments a
                 JOIN services s ON s.id = a.service_id
                 JOIN slots sl ON sl.id = a.slot_id
-                WHERE a.telegram_id = ? 
+                WHERE a.telegram_id = ?
+                AND a.tenant_id = ?
                 AND a.status != 'cancelled'
                 AND sl.datetime > datetime('now')
                 ORDER BY sl.datetime"""
-            ).bind(telegram_id).all()
+            ).bind(telegram_id, tenant_id).all()
             
             return Response.json(result.results, headers=headers)   
 
@@ -359,7 +373,7 @@ class Default(WorkerEntrypoint):
                     status=403,
                     headers=headers
                 )
-            
+            tenant_id = self.get_tenant_id(url)
             result = await self.env.booking_db.prepare(
                 """SELECT
                     a.id,
@@ -374,7 +388,7 @@ class Default(WorkerEntrypoint):
                 JOIN slots sl ON sl.id = a.slot_id
                 WHERE a.tenant_id = ? AND a.status != 'cancelled'
                 ORDER BY sl.datetime"""
-            ).bind(1).all()
+            ).bind(tenant_id).all()
             return Response.json(result.results, headers=headers)
         if path.endswith("/api/services") and request.method == "POST":
             try:
@@ -384,7 +398,7 @@ class Default(WorkerEntrypoint):
                 price = body.get("price")
                 description = body.get("description")
                 telegram_id = body.get("telegram_id")
-                tenant_id = 1
+                tenant_id = self.get_tenant_id(url, body)
 
                 # 2. Проверяем, что обязательные поля пришли
                 if not all([name, price, telegram_id]):
@@ -430,6 +444,7 @@ class Default(WorkerEntrypoint):
                 #print(f"DEBUG: PUT SERVICES triggered, service_id={service_id}")
                 
                 body = await request.json()
+                tenant_id = self.get_tenant_id(url, body)
                 telegram_id = str(body.get("telegram_id", ""))
                 name = body.get("name")
                 price = body.get("price")
@@ -455,7 +470,7 @@ class Default(WorkerEntrypoint):
                 
                 await self.env.booking_db.prepare(
                     "UPDATE services SET name = ?, price = ?, description = ? WHERE id = ? AND tenant_id = ?"
-                ).bind(name, price, description, service_id, 1).run()
+                ).bind(name, price, description, service_id, tenant_id).run()
                 
                 return Response.json({"success": True}, headers=headers)
                 
@@ -494,10 +509,10 @@ class Default(WorkerEntrypoint):
                         status=403,
                         headers=headers
                     )
-                
+                tenant_id = self.get_tenant_id(url)
                 await self.env.booking_db.prepare(
                     "DELETE FROM services WHERE id = ? AND tenant_id = ?"
-                ).bind(service_id, 1).run()
+                ).bind(service_id, tenant_id).run()
                 
                 return Response.json({"success": True}, headers=headers)
                 
@@ -509,12 +524,13 @@ class Default(WorkerEntrypoint):
                 )        
         if path.endswith("/api/services"):
             result = await self.env.booking_db.prepare(
-                "SELECT id, name, price FROM services WHERE tenant_id = 1"
-            ).all()
+                "SELECT id, name, price, description FROM services WHERE tenant_id = ?"
+            ).bind(tenant_id).all()
             return Response.json(result.results, headers=headers)
         if path.endswith("/api/tenant") and request.method == "PUT":
             try:
                 body = await request.json()
+                tenant_id = self.get_tenant_id(url, body)
                 telegram_id = str(body.get("telegram_id", ""))
                 
                 if not telegram_id:
@@ -561,9 +577,10 @@ class Default(WorkerEntrypoint):
                     headers=headers
                 )
         if path.endswith("/api/schedules") and request.method == "GET":
+            tenant_id = self.get_tenant_id(url)
             result = await self.env.booking_db.prepare(
-                "SELECT day_of_week, start_time, end_time, is_working FROM schedules WHERE tenant_id = 1 ORDER BY day_of_week"
-            ).all()
+                "SELECT day_of_week, start_time, end_time, is_working FROM schedules WHERE tenant_id = ? ORDER BY day_of_week"
+            ).bind(tenant_id).all()
             tenant = await self.env.booking_db.prepare(
                 "SELECT slot_duration FROM tenants WHERE id = 1"
             ).first()
@@ -575,6 +592,7 @@ class Default(WorkerEntrypoint):
         if path.endswith("/api/schedules") and request.method == "PUT":
             try:
                 body = await request.json()
+                tenant_id = self.get_tenant_id(url, body)
                 telegram_id = str(body.get("telegram_id", ""))
                 
                 if not telegram_id:
@@ -615,9 +633,9 @@ class Default(WorkerEntrypoint):
         if path.endswith("/api/tenant") and request.method == "GET":
             result = await self.env.booking_db.prepare(
                 """SELECT id, name, address, phone, working_hours, logo_url, description 
-                   FROM tenants WHERE id = 1"""
-            ).first()
-            return Response.json(result, headers=headers)     
+                   FROM tenants WHERE id = ?"""
+            ).bind(tenant_id).first()
+            return Response.json(result, headers=headers)  
 
         if path.endswith("/api/slots/by-date"):
             parts = url.split("?")
@@ -634,17 +652,17 @@ class Default(WorkerEntrypoint):
                     headers=headers
                 )
             
-            await self.generate_slots(1, 30)
+            await self.generate_slots(tenant_id, 30)
             result = await self.env.booking_db.prepare(
-                "SELECT id, datetime FROM slots WHERE tenant_id = 1 AND is_booked = 0 AND date(datetime) = ? ORDER BY datetime"
-            ).bind(date_str).all()
+                "SELECT id, datetime FROM slots WHERE tenant_id = ? AND is_booked = 0 AND date(datetime) = ? ORDER BY datetime"
+            ).bind(tenant_id, date_str).all()
             return Response.json(result.results, headers=headers)        
         
         if path.endswith("/api/slots"):
-            await self.generate_slots(1, 30)
+            await self.generate_slots(tenant_id, 30)
             result = await self.env.booking_db.prepare(
-                "SELECT id, datetime FROM slots WHERE tenant_id = 1 AND is_booked = 0 ORDER BY datetime"
-            ).all()
+                "SELECT id, datetime FROM slots WHERE tenant_id = ? AND is_booked = 0 ORDER BY datetime"
+            ).bind(tenant_id).all()
             return Response.json(result.results, headers=headers)        
             # --- Создание записи ---
         
@@ -657,7 +675,7 @@ class Default(WorkerEntrypoint):
                 service_id = body.get("service_id")
                 slot_id = body.get("slot_id")
                 telegram_id = body.get("telegram_id")
-                tenant_id = 1  # пока захардкожено
+                tenant_id = self.get_tenant_id(url, body)
                 
                 # 2. Проверяем, что все поля пришли
                 if not all([user_name, user_phone, service_id, slot_id]):
