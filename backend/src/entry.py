@@ -24,10 +24,28 @@ class Default(WorkerEntrypoint):
         print(f"DEBUG: method={request.method}, path={path}")
         
         # CORS-заголовки для фронтенда (Mini App)
+        # Разрешённые источники (Origin)
+        allowed_origins = [
+            "https://master.booking-frontend-7ze.pages.dev",
+            "https://web.telegram.org",
+            "https://telegram.org",
+        ]
+        
+        # Получаем Origin из запроса
+        origin = request.headers.get("Origin", "")
+        
+        # Если Origin в списке разрешённых — подставляем его
+        if origin in allowed_origins:
+            allow_origin = origin
+        else:
+            # Fallback для Telegram WebView (может не присылать Origin)
+            allow_origin = "https://master.booking-frontend-7ze.pages.dev"
+        
         headers = {
-            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Origin": allow_origin,
             "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
             "Access-Control-Allow-Headers": "Content-Type",
+            "Access-Control-Max-Age": "86400",  # Кэшируем preflight на 24 часа
         }
         
         # Preflight-запрос от браузера
@@ -77,10 +95,11 @@ class Default(WorkerEntrypoint):
                     headers=headers
                 )
             
-            # Проверяем, что запись принадлежит клиенту
+            # Проверяем, что запись принадлежит клиенту И тенанту
+            tenant_id = self.get_tenant_id(url)
             check = await self.env.booking_db.prepare(
-                "SELECT id, slot_id FROM appointments WHERE id = ? AND telegram_id = ?"
-            ).bind(appointment_id, telegram_id).first()
+                "SELECT id, slot_id FROM appointments WHERE id = ? AND telegram_id = ? AND tenant_id = ?"
+            ).bind(appointment_id, telegram_id, tenant_id).first()
 
             if not check:
                 return Response.json(
@@ -122,7 +141,17 @@ class Default(WorkerEntrypoint):
                         f"Слот освободился."
                     )
                     try:
-                        await self.send_telegram_message(owner["owner_telegram_id"], message)
+                        # Получаем токен бота тенанта
+                        tenant_bot = await self.env.booking_db.prepare(
+                            "SELECT telegram_bot_token FROM tenants WHERE id = ?"
+                        ).bind(tenant_id).first()
+
+                        if tenant_bot and tenant_bot["telegram_bot_token"]:
+                            await self.send_telegram_message_with_token(
+                                owner["owner_telegram_id"], 
+                                message, 
+                                tenant_bot["telegram_bot_token"]
+                            )
                     except Exception as e:
                         print(f"Ошибка отправки: {e}")
             
@@ -143,17 +172,22 @@ class Default(WorkerEntrypoint):
                         headers=headers
                     )
                 
+                # Сначала узнаем, к какому тенанту относится запись
+                appointment_tenant = await self.env.booking_db.prepare(
+                    "SELECT tenant_id FROM appointments WHERE id = ?"
+                ).bind(appointment_id).first()
+                
+                if not appointment_tenant:
+                    return Response.json({"error": "Запись не найдена"}, status=404, headers=headers)
+                
+                # Проверяем, что это владелец ИМЕННО ЭТОГО тенанта
                 check = await self.env.booking_db.prepare(
-                    "SELECT id FROM tenants WHERE owner_telegram_id = ?"
-                ).bind(telegram_id).first()
+                    "SELECT id FROM tenants WHERE owner_telegram_id = ? AND id = ?"
+                ).bind(telegram_id, appointment_tenant["tenant_id"]).first()
                 
                 if not check:
-                    return Response.json(
-                        {"error": "Forbidden"},
-                        status=403,
-                        headers=headers
-                    )
-                
+                    return Response.json({"error": "Forbidden"}, status=403, headers=headers)
+                    
                 await self.env.booking_db.prepare(
                     "UPDATE appointments SET visited = ? WHERE id = ?"
                 ).bind(visited, appointment_id).run()
@@ -168,38 +202,25 @@ class Default(WorkerEntrypoint):
                 )
 
         if "/api/appointments/" in path and request.method == "GET":
-            # Извлекаем ID из пути
-            appointment_id = path.split("/api/appointments/")[1].split("?")[0]
+            # ... парсинг appointment_id и telegram_id ...
             
-            # Извлекаем telegram_id из query
-            parts = url.split("?")
-            query = parts[1] if len(parts) > 1 else ""
+            # Сначала узнаем, к какому тенанту относится запись
+            appointment_tenant = await self.env.booking_db.prepare(
+                "SELECT tenant_id FROM appointments WHERE id = ?"
+            ).bind(appointment_id).first()
             
-            telegram_id = None
-            if "telegram_id=" in query:
-                telegram_id = query.split("telegram_id=")[1].split("&")[0]
+            if not appointment_tenant:
+                return Response.json({"error": "Запись не найдена"}, status=404, headers=headers)
             
-            if not telegram_id:
-                return Response.json(
-                    {"error": "Не передан telegram_id"},
-                    status=401,
-                    headers=headers
-                )
-            
-            # Проверяем, что это владелец
+            # Проверяем, что это владелец ИМЕННО ЭТОГО тенанта
             check = await self.env.booking_db.prepare(
-                "SELECT id FROM tenants WHERE owner_telegram_id = ?"
-            ).bind(telegram_id).first()
+                "SELECT id FROM tenants WHERE owner_telegram_id = ? AND id = ?"
+            ).bind(telegram_id, appointment_tenant["tenant_id"]).first()
             
             if not check:
-                return Response.json(
-                    {"error": "Forbidden"},
-                    status=403,
-                    headers=headers
-                )
+                return Response.json({"error": "Forbidden"}, status=403, headers=headers)
             
-            tenant_id = self.get_tenant_id(url)
-            
+            tenant_id = appointment_tenant["tenant_id"]
             # Получаем запись
             result = await self.env.booking_db.prepare(
                 """SELECT 
@@ -282,19 +303,23 @@ class Default(WorkerEntrypoint):
                     headers=headers
                 )
             
-            # Проверка роли: владелец?
+            # Сначала узнаем, к какому тенанту относится запись
+            appointment_tenant = await self.env.booking_db.prepare(
+                "SELECT tenant_id FROM appointments WHERE id = ?"
+            ).bind(appointment_id).first()
+            
+            if not appointment_tenant:
+                return Response.json({"error": "Запись не найдена"}, status=404, headers=headers)
+            
+            # Проверяем, что это владелец ИМЕННО ЭТОГО тенанта
             check = await self.env.booking_db.prepare(
-                "SELECT id FROM tenants WHERE owner_telegram_id = ?"
-            ).bind(telegram_id).first()
+                "SELECT id FROM tenants WHERE owner_telegram_id = ? AND id = ?"
+            ).bind(telegram_id, appointment_tenant["tenant_id"]).first()
             
             if not check:
-                return Response.json(
-                    {"error": "Forbidden"},
-                    status=403,
-                    headers=headers
-                )
+                return Response.json({"error": "Forbidden"}, status=403, headers=headers)
             
-            tenant_id = 1
+            tenant_id = appointment_tenant["tenant_id"]
             
             # Получаем slot_id записи
             appointment = await self.env.booking_db.prepare(
@@ -342,12 +367,21 @@ class Default(WorkerEntrypoint):
                         f"Слот освободился."
                     )
                     try:
-                        await self.send_telegram_message(owner["owner_telegram_id"], message)
+                        # Получаем токен бота тенанта
+                        tenant_bot = await self.env.booking_db.prepare(
+                            "SELECT telegram_bot_token FROM tenants WHERE id = ?"
+                        ).bind(tenant_id).first()
+
+                        if tenant_bot and tenant_bot["telegram_bot_token"]:
+                            await self.send_telegram_message_with_token(
+                                owner["owner_telegram_id"], 
+                                message, 
+                                tenant_bot["telegram_bot_token"]
+                            )
                     except Exception as e:
                         print(f"Ошибка отправки: {e}")
             
             return Response.json({"success": True}, headers=headers)          
-
         if path.endswith("/api/appointments"):
             parts = url.split("?")
             query = parts[1] if len(parts) > 1 else ""
@@ -480,7 +514,6 @@ class Default(WorkerEntrypoint):
                     status=500,
                     headers=headers
                 )
-
         if "/api/services/" in path and request.method == "DELETE":
             try:
                 service_id = path.split("/api/services/")[1].split("?")[0]
@@ -588,7 +621,6 @@ class Default(WorkerEntrypoint):
                 "schedules": result.results,
                 "slot_duration": tenant["slot_duration"] if tenant else 120
             }, headers=headers)
-
         if path.endswith("/api/schedules") and request.method == "PUT":
             try:
                 body = await request.json()
@@ -636,7 +668,6 @@ class Default(WorkerEntrypoint):
                    FROM tenants WHERE id = ?"""
             ).bind(tenant_id).first()
             return Response.json(result, headers=headers)  
-
         if path.endswith("/api/slots/by-date"):
             parts = url.split("?")
             query = parts[1] if len(parts) > 1 else ""
@@ -656,16 +687,14 @@ class Default(WorkerEntrypoint):
             result = await self.env.booking_db.prepare(
                 "SELECT id, datetime FROM slots WHERE tenant_id = ? AND is_booked = 0 AND date(datetime) = ? ORDER BY datetime"
             ).bind(tenant_id, date_str).all()
-            return Response.json(result.results, headers=headers)        
-        
+            return Response.json(result.results, headers=headers)                
         if path.endswith("/api/slots"):
             await self.generate_slots(tenant_id, 30)
             result = await self.env.booking_db.prepare(
                 "SELECT id, datetime FROM slots WHERE tenant_id = ? AND is_booked = 0 ORDER BY datetime"
             ).bind(tenant_id).all()
             return Response.json(result.results, headers=headers)        
-            # --- Создание записи ---
-        
+            # --- Создание записи ---        
         if path.endswith("/api/book") and request.method == "POST":
             try:
                 # 1. Читаем тело запроса
@@ -738,7 +767,17 @@ class Default(WorkerEntrypoint):
                         f"📅 <b>Время:</b> {slot_info['datetime']}"
                     )
                     try:
-                        await self.send_telegram_message(owner["owner_telegram_id"], message)
+                        # Получаем токен бота тенанта
+                        tenant_bot = await self.env.booking_db.prepare(
+                            "SELECT telegram_bot_token FROM tenants WHERE id = ?"
+                        ).bind(tenant_id).first()
+
+                        if tenant_bot and tenant_bot["telegram_bot_token"]:
+                            await self.send_telegram_message_with_token(
+                                owner["owner_telegram_id"], 
+                                message, 
+                                tenant_bot["telegram_bot_token"]
+                            )
                     except Exception as e:
                         print(f"Ошибка отправки в Telegram: {e}")
 
@@ -756,8 +795,81 @@ class Default(WorkerEntrypoint):
         
         # --- Вебхуки ботов (заглушки) ---
         
-        if "/webhook/telegram/" in path:
-            return Response("OK: telegram webhook", headers=headers)
+        if "/webhook/telegram/" in path and request.method == "POST":
+            try:
+                # Достаем webhook_secret из URL (НЕ токен!)
+                webhook_secret = str(path.split("/webhook/telegram/")[1])
+                
+                # Ищем тенанта по webhook_secret
+                tenant = await self.env.booking_db.prepare(
+                    "SELECT id, name, telegram_bot_token FROM tenants WHERE webhook_secret = ?"
+                ).bind(webhook_secret).first()
+                
+                if not tenant:
+                    return Response("Unknown webhook", status=404)
+                
+                # Проверяем заголовок от Telegram
+                secret_header = request.headers.get("X-Telegram-Bot-Api-Secret-Token")
+                if secret_header != webhook_secret:
+                    return Response("Forbidden", status=403)
+                
+                # Парсим сообщение
+                body = await request.json()
+                
+                if "message" in body and "text" in body["message"]:
+                    text = body["message"]["text"]
+                    chat_id = body["message"]["chat"]["id"]
+                    
+                    if text == "/start":
+                        mini_app_url = f"https://master.booking-frontend-7ze.pages.dev/?tenant={tenant['id']}"
+                        reply_text = f"Добро пожаловать в {tenant['name']}!\nНажмите кнопку ниже, чтобы записаться."
+                        
+                        await self.send_telegram_message_with_button(
+                            chat_id, 
+                            reply_text, 
+                            mini_app_url, 
+                            tenant["telegram_bot_token"]
+                        )
+                
+                return Response("OK", headers=headers)
+            except Exception as e:
+                print(f"ERROR webhook: {e}")
+                return Response("Error", status=500)
+            try:
+                # Достаем токен из URL (например, /webhook/telegram/12345:ABC)
+                bot_token = path.split("/webhook/telegram/")[1]
+                
+                # Ищем тенанта, которому принадлежит этот бот
+                secret = path.split("/webhook/telegram/")[1]
+                tenant = await self.env.booking_db.prepare(
+                    "SELECT id, name, telegram_bot_token FROM tenants WHERE webhook_secret = ?"
+                ).bind(secret).first()
+                
+                if not tenant:
+                    print(f"DEBUG: Неизвестный токен бота: {bot_token[:10]}...")
+                    return Response("Unknown bot", status=404)
+
+                # Парсим сообщение от Telegram
+                body = await request.json()
+                
+                # Проверяем, есть ли сообщение и команда /start
+                if "message" in body and "text" in body["message"]:
+                    text = body["message"]["text"]
+                    chat_id = body["message"]["chat"]["id"]
+                    
+                    if text == "/start":
+                        # Отправляем клиенту кнопку для открытия Mini App
+                        # ВАЖНО: ссылка должна содержать tenant=ID
+                        mini_app_url = f"https://master.booking-frontend-7ze.pages.dev/?tenant={tenant['id']}"
+                        
+                        reply_text = f"Добро пожаловать в {tenant['name']}!\nНажмите кнопку ниже, чтобы записаться на услугу."
+                        
+                        await self.send_telegram_message_with_button(chat_id, reply_text, mini_app_url, bot_token)
+                
+                return Response("OK", headers=headers)
+            except Exception as e:
+                print(f"ERROR webhook: {e}")
+                return Response("Error", status=500)
         
         if "/webhook/max/" in path:
             return Response("OK: max webhook", headers=headers)
@@ -766,13 +878,28 @@ class Default(WorkerEntrypoint):
         
         return Response("Booking API is running", headers=headers)
 
-    async def send_telegram_message(self, chat_id, text):
-        token = self.env.TELEGRAM_BOT_TOKEN
-        print(f"DEBUG: token is {'set' if token else 'NONE'}")
-        print(f"DEBUG: chat_id = {chat_id}")
-        print(f"DEBUG: text = {text[:50]}")
+    async def send_telegram_message_with_button(self, chat_id, text, url, bot_token):
+        api_url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
         
-        url = f"https://api.telegram.org/bot{token}/sendMessage"
+        request = Request(api_url, method="POST",
+            headers={"Content-Type": "application/json"},
+            body=json.dumps({
+                "chat_id": chat_id,
+                "text": text,
+                "reply_markup": {
+                    "inline_keyboard": [[
+                        {"text": "📅 Записаться", "web_app": {"url": url}}
+                    ]]
+                }
+            })
+        )
+        try:
+            await fetch(request)
+        except Exception as e:
+            print(f"DEBUG: fetch failed = {e}")
+
+    async def send_telegram_message_with_token(self, chat_id, text, bot_token):
+        url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
         request = Request(url, method="POST",
             headers={"Content-Type": "application/json"},
             body=json.dumps({
@@ -781,15 +908,11 @@ class Default(WorkerEntrypoint):
                 "parse_mode": "HTML"
             })
         )
-        
         try:
-            response = await fetch(request)
-            print(f"DEBUG: Telegram response status = {response.status}")
-            response_text = await response.text()
-            print(f"DEBUG: Telegram response = {response_text[:200]}")
+            await fetch(request)
         except Exception as e:
             print(f"DEBUG: fetch failed = {e}")
-            
+       
     async def generate_slots(self, tenant_id, days_ahead=30):
         from datetime import date, timedelta
         
