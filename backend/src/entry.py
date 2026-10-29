@@ -4,6 +4,21 @@ import hashlib
 import hmac
 import time
 from urllib.parse import parse_qsl, unquote
+def is_valid_string(value, max_len=200):
+    return isinstance(value, str) and 0 < len(value.strip()) <= max_len
+
+def is_valid_phone(value):
+    if not isinstance(value, str):
+        return False
+    digits = ''.join(c for c in value if c.isdigit())
+    return len(digits) >= 10 and len(digits) <= 11
+
+def is_valid_price(value):
+    try:
+        price = float(value)
+        return price > 0 and price < 100000
+    except (ValueError, TypeError):
+        return False
 
 def validate_init_data(init_data: str, bot_token: str, expires_in: int = 86400) -> dict | None:
     """
@@ -134,6 +149,7 @@ class Default(WorkerEntrypoint):
                     return Response.json({"error": "Bot token not found"}, status=500, headers=headers)
             else:
                 # Fallback для браузера (без initData) — используем telegram_id
+                # когда начнется нормальный проект, удалить и поставить ошибку, т.к. это доступ с браузера.
                 telegram_id = None
                 if "telegram_id=" in query:
                     telegram_id = query.split("telegram_id=")[1].split("&")[0]
@@ -238,7 +254,9 @@ class Default(WorkerEntrypoint):
                 body = await request.json()
                 visited = body.get("visited")
                 telegram_id = body.get("telegram_id")
-                
+
+                if visited not in [0, 1, 2]:
+                    return Response.json({"error": "visited должен быть 0, 1 или 2"}, status=400, headers=headers)                
                 if not all([visited is not None, telegram_id]):
                     return Response.json(
                         {"error": "Не все поля заполнены"},
@@ -507,6 +525,10 @@ class Default(WorkerEntrypoint):
                 description = body.get("description")
                 telegram_id = body.get("telegram_id")
                 tenant_id = self.get_tenant_id(url, body)
+                if not is_valid_string(name, 100):
+                    return Response.json({"error": "Некорректное название"}, status=400, headers=headers)
+                if not is_valid_price(price):
+                    return Response.json({"error": "Цена должна быть числом от 0 до 100 000"}, status=400, headers=headers)
 
                 # 2. Проверяем, что обязательные поля пришли
                 if not all([name, price, telegram_id]):
@@ -557,6 +579,10 @@ class Default(WorkerEntrypoint):
                 name = body.get("name")
                 price = body.get("price")
                 description = body.get("description")
+                if not is_valid_string(name, 100):
+                    return Response.json({"error": "Некорректное название"}, status=400, headers=headers)
+                if not is_valid_price(price):
+                    return Response.json({"error": "Цена должна быть числом от 0 до 100 000"}, status=400, headers=headers)
                 
                 if not telegram_id:
                     return Response.json(
@@ -639,7 +665,11 @@ class Default(WorkerEntrypoint):
                 body = await request.json()
                 tenant_id = self.get_tenant_id(url, body)
                 telegram_id = str(body.get("telegram_id", ""))
-                
+
+                if not is_valid_string(body.get("name"), 100):
+                    return Response.json({"error": "Некорректное название"}, status=400, headers=headers)
+                if body.get("phone") and not is_valid_phone(body.get("phone")):
+                    return Response.json({"error": "Некорректный телефон"}, status=400, headers=headers)                
                 if not telegram_id:
                     return Response.json(
                         {"error": "Не передан telegram_id"},
@@ -713,6 +743,11 @@ class Default(WorkerEntrypoint):
                 
                 schedules = body.get("schedules", [])
                 slot_duration = body.get("slot_duration")
+                if slot_duration and slot_duration not in [30, 60, 90, 120, 180]:
+                    return Response.json({"error": "Некорректная длительность слота"}, status=400, headers=headers)
+                
+                if not isinstance(schedules, list) or len(schedules) != 7:
+                    return Response.json({"error": "schedules должен содержать 7 дней"}, status=400, headers=headers)
                 
                 if slot_duration:
                     await self.env.booking_db.prepare(
@@ -779,6 +814,15 @@ class Default(WorkerEntrypoint):
                 slot_id = body.get("slot_id")
                 telegram_id = body.get("telegram_id")
                 tenant_id = self.get_tenant_id(url, body)
+                # Валидация
+                if not is_valid_string(user_name, 100):
+                    return Response.json({"error": "Некорректное имя"}, status=400, headers=headers)
+                if not is_valid_phone(user_phone):
+                    return Response.json({"error": "Некорректный телефон"}, status=400, headers=headers)
+                if not isinstance(service_id, (int, str)) or not str(service_id).isdigit():
+                    return Response.json({"error": "Некорректный service_id"}, status=400, headers=headers)
+                if not isinstance(slot_id, (int, str)) or not str(slot_id).isdigit():
+                    return Response.json({"error": "Некорректный slot_id"}, status=400, headers=headers)
                 
                 # 2. Проверяем, что все поля пришли
                 if not all([user_name, user_phone, service_id, slot_id]):
