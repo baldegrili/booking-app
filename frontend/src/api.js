@@ -80,6 +80,15 @@ export async function bookAppointment(data) {
 
 export async function getRole(telegramId) {
   const t = getTenantId()
+  const initData = getInitData()
+  
+  if (initData) {
+    // Отправляем initData для проверки
+    const res = await fetch(`${API_URL}/api/whoami?initData=${encodeURIComponent(initData)}&tenant_id=${t}`)
+    return res.json()
+  }
+  
+  // Fallback для браузера
   const res = await fetch(`${API_URL}/api/whoami?telegram_id=${telegramId}&tenant_id=${t}`)
   return res.json()
 }
@@ -142,4 +151,7 @@ export async function updateSchedules(data) {
     body: JSON.stringify({ ...data, tenant_id: t }),
   })
   return res.json()
+}
+export function getInitData() {
+  return window.Telegram?.WebApp?.initData || ''
 }

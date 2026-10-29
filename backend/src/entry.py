@@ -1,6 +1,61 @@
 from workers import WorkerEntrypoint, Response, fetch, Request
 import json
+import hashlib
+import hmac
+import time
+from urllib.parse import parse_qsl, unquote
 
+def validate_init_data(init_data: str, bot_token: str, expires_in: int = 86400) -> dict | None:
+    """
+    Проверяет подпись initData от Telegram.
+    Возвращает распарсенные данные, если подпись верна, иначе None.
+    """
+    try:
+        # Парсим строку initData
+        parsed = dict(parse_qsl(init_data, keep_blank_values=True))
+        
+        # Извлекаем хэш
+        received_hash = parsed.pop("hash", None)
+        if not received_hash:
+            return None
+        
+        # Проверяем срок действия (auth_date)
+        auth_date = int(parsed.get("auth_date", 0))
+        if expires_in > 0 and (time.time() - auth_date) > expires_in:
+            return None  # Данные просрочены
+        
+        # Формируем строку для проверки: сортируем ключи и склеиваем
+        data_check_string = "\n".join(
+            f"{key}={value}" for key, value in sorted(parsed.items())
+        )
+        
+        # Вычисляем секретный ключ
+        secret_key = hmac.new(
+            b"WebAppData",
+            bot_token.encode(),
+            hashlib.sha256
+        ).digest()
+        
+        # Вычисляем хэш
+        calculated_hash = hmac.new(
+            secret_key,
+            data_check_string.encode(),
+            hashlib.sha256
+        ).hexdigest()
+        
+        # Сравниваем
+        if not hmac.compare_digest(calculated_hash, received_hash):
+            return None
+        
+        # Парсим user (если есть)
+        if "user" in parsed:
+            parsed["user"] = json.loads(parsed["user"])
+        
+        return parsed
+    
+    except Exception as e:
+        print(f"DEBUG: initData validation error: {e}")
+        return None
 
 class Default(WorkerEntrypoint):
     def get_tenant_id(self, request_url, body=None):
@@ -56,17 +111,36 @@ class Default(WorkerEntrypoint):
             parts = url.split("?")
             query = parts[1] if len(parts) > 1 else ""
             
-            telegram_id = None
-            if "telegram_id=" in query:
-                telegram_id = query.split("telegram_id=")[1].split("&")[0]
+            # Пытаемся получить initData из query
+            init_data = None
+            if "initData=" in query:
+                init_data = unquote(query.split("initData=")[1].split("&")[0])
+            
+            # Если initData есть — проверяем подпись
+            if init_data:
+                # Получаем токен бота тенанта
+                tenant_id = self.get_tenant_id(url)
+                tenant = await self.env.booking_db.prepare(
+                    "SELECT telegram_bot_token FROM tenants WHERE id = ?"
+                ).bind(tenant_id).first()
+                
+                if tenant and tenant["telegram_bot_token"]:
+                    validated = validate_init_data(init_data, tenant["telegram_bot_token"])
+                    if validated and "user" in validated:
+                        telegram_id = str(validated["user"]["id"])
+                    else:
+                        return Response.json({"error": "Invalid initData"}, status=403, headers=headers)
+                else:
+                    return Response.json({"error": "Bot token not found"}, status=500, headers=headers)
+            else:
+                # Fallback для браузера (без initData) — используем telegram_id
+                telegram_id = None
+                if "telegram_id=" in query:
+                    telegram_id = query.split("telegram_id=")[1].split("&")[0]
             
             if not telegram_id:
-                return Response.json(
-                    {"error": "Не передан telegram_id"},
-                    status=400,
-                    headers=headers
-                )
-            
+                return Response.json({"error": "Не передан telegram_id"}, status=400, headers=headers)
+
             check = await self.env.booking_db.prepare(
                 "SELECT id FROM tenants WHERE owner_telegram_id = ?"
             ).bind(telegram_id).first()
